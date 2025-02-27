@@ -58,4 +58,12 @@ dist-ssr/
 *.sln
 *.sw?
 .DS_Store
-Thumbs.db 
+Thumbs.db my-app-backup.tar.gz
+
+# Large files
+*.tar.gz
+*.gz
+
+# Node modules
+node_modules/
+calgentic-UI/node_modules/
