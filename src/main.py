@@ -57,6 +57,24 @@ def calendarAuth():
         # Save the credentials for the next run
         with open(token_path, "w") as token:
             token.write(creds.to_json())
+
+
+"""
+
+def deleteEvent(date, title, start, end, calendarId='primary'):
+    try:
+        global service
+        global creds
+        calendarAuth()
+        service = build('calendar', 'v3', credentials=creds)
+        event = service.events().delete(calendarId=calendarId, eventId=eventId).execute()
+        return True
+    except Exception as e:
+        print(f"Error in deleteEvent: {e}")
+        return False
+"""
+
+
     
 def createEvent(summary, description, start, end, calendarId='primary'):
    try:
@@ -78,12 +96,10 @@ def createEvent(summary, description, start, end, calendarId='primary'):
       
       # Parse the datetime strings to ensure they're valid
       try:
-          # Replace Z with the appropriate offset if needed
-          if start.endswith('Z'):
-              start = start[:-1] + '-08:00'  # Replace Z with PST offset
-          if end.endswith('Z'):
-              end = end[:-1] + '-08:00'  # Replace Z with PST offset
-              
+          # Get the local timezone
+          local_tz = datetime.datetime.now().astimezone().tzinfo
+          
+          # Parse the datetime strings
           start_dt = datetime.datetime.fromisoformat(start)
           end_dt = datetime.datetime.fromisoformat(end)
           
@@ -102,11 +118,11 @@ def createEvent(summary, description, start, end, calendarId='primary'):
          'description': description,
          'start': {
             'dateTime': start,
-            'timeZone': 'America/Los_Angeles',  # Use IANA time zone name for PST
+            'timeZone': str(local_tz),  # Use the local timezone
          },
          'end': {
             'dateTime': end,
-            'timeZone': 'America/Los_Angeles',  # Use IANA time zone name for PST
+            'timeZone': str(local_tz),  # Use the local timezone
          }
       }
       
@@ -198,19 +214,32 @@ def promptToEvent(prompt):
     
     client = OpenAI(api_key=os.getenv('openai_key'))
     
-    # Get current date for reference
-    pst_timezone = datetime.timezone(datetime.timedelta(hours=-8))  # PST is UTC-8
-    current_date = datetime.datetime.now(pst_timezone)
+    # Get current date and timezone for reference
+    local_tz = datetime.datetime.now().astimezone().tzinfo
+    current_date = datetime.datetime.now().astimezone()
+    
+    # Get the timezone offset as a string (e.g., "-07:00")
+    tz_offset = current_date.strftime('%z')
+    # Format it with a colon (e.g., "-07:00")
+    if len(tz_offset) == 5:
+        tz_offset = f"{tz_offset[:3]}:{tz_offset[3:]}"
+    
+    print(f"Local timezone offset: {tz_offset}")
     
     modified_prompt = f"""
     You are a calendar assistant. Given the user's input, determine if they want to create a new event or view existing events.
     
-    Today's date is {current_date.strftime('%Y-%m-%d')}. When interpreting dates:
+    Today's date is {current_date.strftime('%Y-%m-%d')} and the current time is {current_date.strftime('%H:%M:%S')} in timezone {tz_offset}.
+    
+    When interpreting dates and times:
     - For relative dates like "tomorrow", "next week", etc., calculate the actual date based on today's date.
     - Always use the current year ({current_date.year}) for dates unless a specific year is mentioned.
     - Never schedule events in the past.
+    - When a user specifies a time (like 9 AM), use that EXACT time. Do not adjust for any timezone differences.
+    - Use the user's local timezone offset of {tz_offset} in the output.
     
     - If they want to create an event, return the following JSON structure:
+    - factor in the timezone offset in the output, including daylight savings time, so if a user says 6 pm before DST, it should still schedule it for 6pm not for 7pm
       
       {{
         "action_type": "create",
@@ -218,8 +247,8 @@ def promptToEvent(prompt):
           {{
             "summary": "Event title",
             "description": "Event details",
-            "start": "YYYY-MM-DDTHH:MM:SS-07:00",
-            "end": "YYYY-MM-DDTHH:MM:SS-07:00",
+            "start": "YYYY-MM-DDTHH:MM:SS{tz_offset}",
+            "end": "YYYY-MM-DDTHH:MM:SS{tz_offset}",
             "calendarId": "primary"
           }}
         ],
@@ -234,14 +263,30 @@ def promptToEvent(prompt):
         "query_details": {{
             "date" : "date of the event they want to view",
             "title" : "title of the event they want to view",
-            "start": "YYYY-MM-DDTHH:MM:SS-07:00",
-            "end": "YYYY-MM-DDTHH:MM:SS-07:00",
+            "start": "YYYY-MM-DDTHH:MM:SS{tz_offset}",
+            "end": "YYYY-MM-DDTHH:MM:SS{tz_offset}",
             "calendarId": "primary"
         }}
       }}
-      
+      - If they want to delete an event
+        - atleast one of the following fields must be included: `date`, `title`, `start`, `end`
+        - if calendarID is provided, then change the calendarID to the one provided, else assume it is primary
+        -if only calendarID is provided, then don't do anything. 
+        return the following JSON structure:
+      {{
+        "action_type": "delete",
+        "query_details": {{
+            "date" : "date of the event they want to view",
+            "title" : "title of the event they want to view",
+            "start": "YYYY-MM-DDTHH:MM:SS{tz_offset}",
+            "end": "YYYY-MM-DDTHH:MM:SS{tz_offset}",
+            "calendarId": "primary"
+        }}
+      }}
     
     Ensure the response is **valid JSON format**. Do not include markdown formatting like ```json at the beginning or ``` at the end. Just return the raw JSON.
+    
+    IMPORTANT: When the user specifies a time like "9 AM", make sure to use exactly 09:00:00 in the output, not 08:00:00 or any other time. Do not adjust the time in any way.
     
     User input: {prompt}
     """

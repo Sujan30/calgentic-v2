@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 // Define the base URL for your API
-const API_BASE_URL = 'http://127.0.0.1:5000';
+export const API_BASE_URL = 'http://127.0.0.1:5000/api';
 
 // Define response types
 export interface CalendarResponse {
@@ -17,28 +17,34 @@ export interface CalendarResponse {
   }>;
 }
 
+// Add this function to help with debugging
+export function getFullApiUrl(endpoint: string): string {
+  // Remove leading slash if present
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint.substring(1) : endpoint;
+  return `${API_BASE_URL}/${cleanEndpoint}`;
+}
+
 // Function to send a prompt to the backend
-export const sendPrompt = async (prompt: string): Promise<CalendarResponse> => {
+export async function sendPrompt(prompt: string): Promise<CalendarResponse> {
   try {
-    const encodedPrompt = encodeURIComponent(prompt);
-    const response = await axios.get(`${API_BASE_URL}/prompt/${encodedPrompt}`, {
-      timeout: 30000 // 30 seconds timeout
+    const response = await fetch(getFullApiUrl('prompt'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ prompt }),
+      credentials: 'include',
     });
-    
-    return response.data;
-  } catch (error) {
-    if (axios.isAxiosError(error)) {
-      // Handle Axios errors
-      const errorMessage = error.response?.data?.error || error.message;
-      return { 
-        error: `Error: ${errorMessage}`,
-        success: false
-      };
+
+    if (!response.ok) {
+      throw new Error(`API error: ${response.status}`);
     }
-    // Handle other errors
-    return { 
-      error: 'An unexpected error occurred',
-      success: false
-    };
+
+    return await response.json();
+  } catch (error) {
+    console.error('Error sending prompt:', error);
+    return { error: 'Failed to process your request. Please try again.' };
   }
-}; 
+}
+
+// Add other API functions here... 

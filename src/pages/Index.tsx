@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import Header from '@/components/Header';
 import CommandBar from '@/components/CommandBar';
-import { Calendar, Clock, ArrowUp } from 'lucide-react';
+import { Calendar, Clock, ArrowUp, ArrowRight } from 'lucide-react';
 import { sendPrompt, CalendarResponse } from '@/lib/api';
 import { toast } from 'sonner';
+import { useAuth } from '@/contexts/AuthContext';
+import { Button } from '@/components/ui/button';
 
 const SubmitButton = () => {
   return (
@@ -16,9 +19,16 @@ const SubmitButton = () => {
 const Index = () => {
   const [response, setResponse] = useState<CalendarResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const { isAuthenticated, isLoading: authLoading } = useAuth();
+  const navigate = useNavigate();
 
   const handlePromptSubmit = async (prompt: string) => {
     if (!prompt.trim()) return;
+    
+    if (!isAuthenticated) {
+      toast.error("Please sign in to use this feature");
+      return;
+    }
     
     setIsLoading(true);
     
@@ -62,12 +72,41 @@ const Index = () => {
 
           <div className="space-y-8">
             <CommandBar 
-              placeholder='Try "Schedule a meeting with John at 3 PM tomorrow"' 
+              placeholder={isAuthenticated 
+                ? 'Try "Schedule a meeting with John at 3 PM tomorrow"' 
+                : 'Sign in to start using AI calendar assistant'}
               onSubmit={handlePromptSubmit}
               isLoading={isLoading}
+              disabled={!isAuthenticated && !authLoading}
             />
             
-            {!response && !isLoading && (
+            {!isAuthenticated && !authLoading && (
+              <div className="mt-6">
+                <Button 
+                  onClick={() => navigate('/login')} 
+                  className="gap-2"
+                  size="lg"
+                >
+                  Sign in to get started
+                  <ArrowRight className="w-4 h-4" />
+                </Button>
+              </div>
+            )}
+            
+            {isAuthenticated && !isLoading && !response && (
+              <div className="mt-6">
+                <Button 
+                  onClick={() => navigate('/dashboard')} 
+                  className="gap-2"
+                  size="lg"
+                >
+                  Go to Dashboard
+                  <ArrowRight className="w-4 h-4" />
+                </Button>
+              </div>
+            )}
+            
+            {!response && !isLoading && isAuthenticated && (
               <div className="flex flex-wrap justify-center gap-4 text-sm text-gray-500 dark:text-gray-300">
                 <span className="glass px-3 py-1">
                   "What events do I have this Friday?"
