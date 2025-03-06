@@ -67,3 +67,5 @@ Thumbs.db my-app-backup.tar.gz
 # Node modules
 node_modules/
 calgentic-UI/node_modules/
+*.env
+src/.env
