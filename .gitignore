@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Sensitive files
 token.json
 credentials.json
@@ -67,5 +68,11 @@ Thumbs.db my-app-backup.tar.gz
 # Node modules
 node_modules/
 calgentic-UI/node_modules/
+=======
+node_modules
+.env
+*.env
+*src/.env
+>>>>>>> 4c4d936e148251cda583f3681017deab75a6bc99
 *.env
 src/.env
