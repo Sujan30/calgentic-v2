@@ -1,5 +1,6 @@
 import json
 import os
+# import main  # Removing this import to fix deployment error
 import main
 import requests
 from flask import Flask, send_from_directory, jsonify, request, redirect, session, url_for
@@ -10,7 +11,12 @@ import time
 from dotenv import load_dotenv
 import logging
 import jwt
-import google_auth_oauthlib
+import base64
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 # Load environment variables from .env file
 load_dotenv()
@@ -39,7 +45,8 @@ CORS(app,
          "http://localhost:8080",
          "http://127.0.0.1:8080", 
          "http://localhost:3000",
-         "http://127.0.0.1:3000"
+         "http://127.0.0.1:3000", 
+         'http://calgentic.com'
      ]}})
 
 # Configure logging
@@ -56,7 +63,8 @@ logger.info(f"FRONTEND_URL set to: {FRONTEND_URL}")
 if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
     raise Exception("Google OAuth credentials not set. Check .env file")
 else:
-    main.calendarAuth()
+    # main.calendarAuth()
+    pass
 
 @app.before_request
 def log_request_info():
@@ -115,7 +123,7 @@ def onboard(prompt):
 def login():
     try:
         # Define the OAuth scopes
-        SCOPES = ['https://www.googleapis.com/auth/calendar', 'https://www.googleapis.com/auth/userinfo.email', 'https://www.googleapis.com/auth/userinfo.profile']
+        SCOPES = ['openid','https://www.googleapis.com/auth/calendar', 'https://www.googleapis.com/auth/userinfo.email', 'https://www.googleapis.com/auth/userinfo.profile']
         
         # Use the credentials.json file in the root directory
         client_secret_file = os.getenv('google_client_id_path')
@@ -131,7 +139,7 @@ def login():
             }), 500
         
         # Create a flow instance to manage the OAuth 2.0 Authorization Grant Flow steps
-        flow = google_auth_oauthlib.flow.Flow.from_client_secrets_file(
+        flow = InstalledAppFlow.from_client_secrets_file(
             client_secret_file,
             scopes=SCOPES)
         
@@ -382,6 +390,25 @@ def after_request(response):
     
     return response
 
+def generate_new_token(refresh_token):
+    """Generate a new access token using the refresh token"""
+    try:
+        token_endpoint = "https://oauth2.googleapis.com/token"
+        data = {
+            'client_id': os.getenv('google_client_id'),
+            'client_secret': os.getenv('google_client_secret'),
+            'refresh_token': refresh_token,
+            'grant_type': 'refresh_token'
+        }
+        response = requests.post(token_endpoint, data=data)
+        if not response.ok:
+            raise Exception(f"Token refresh failed: {response.text}")
+        tokens = response.json()
+        return tokens.get('access_token')
+    except Exception as e:
+        logger.error(f"Error refreshing token: {str(e)}")
+        raise
+
 @app.route('/refresh-token', methods=['POST'])
 def refresh_token():
     refresh_token = request.cookies.get('refresh_token')
@@ -397,6 +424,7 @@ def refresh_token():
         return response
     except Exception as e:
         return jsonify({"error": str(e)}), 401
+
 @app.errorhandler(403)
 def forbidden_error(error):
     return jsonify({

@@ -6,3 +6,4 @@ python-dotenv
 requests
 pyjwt
 gunicorn
+google-api-python-client
