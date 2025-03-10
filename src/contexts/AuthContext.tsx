@@ -10,6 +10,9 @@ const API_BASE_URL = isDevelopment
   : 'https://calgentic.onrender.com/api'; // Replace with your actual Render domain
 
 // ... rest of the file ...
+const SERVER_BASE_URL = isDevelopment
+  ? 'http://127.0.0.1:5000'
+  : 'https://calgentic.onrender.com'; 
 
 interface User {
   id: string;
@@ -86,12 +89,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, []);
 
   const login = () => {
-    window.location.href = `${API_BASE_URL}/login`;
+    window.location.href = `${SERVER_BASE_URL}/login`;
   };
 
   const logout = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/logout`, {
+      const response = await fetch(`${SERVER_BASE_URL}/logout`, {
         method: 'POST',
         credentials: 'include',
       });
