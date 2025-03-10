@@ -76,3 +76,4 @@ node_modules
 >>>>>>> 4c4d936e148251cda583f3681017deab75a6bc99
 *.env
 src/.env
+my-app-backup.tar.gz
