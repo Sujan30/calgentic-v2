@@ -2,8 +2,14 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { toast } from 'sonner';
 
 // Define the base URL for your API
-const API_BASE_URL = 'http://127.0.0.1:5000/api';
-const SERVER_BASE_URL = 'http://127.0.0.1:5000';
+
+// Define the base URL for your API - dynamically set based on environment
+const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+const API_BASE_URL = isDevelopment 
+  ? 'http://127.0.0.1:8000/api'
+  : 'https://your-render-app-name.onrender.com/api'; // Replace with your actual Render domain
+
+// ... rest of the file ...
 
 interface User {
   id: string;
