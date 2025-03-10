@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 const API_BASE_URL = isDevelopment 
   ? 'http://127.0.0.1:8000/api'
-  : 'https://your-render-app-name.onrender.com/api'; // Replace with your actual Render domain
+  : 'https://calgentic.com/api'; // Replace with your actual Render domain
 
 // ... rest of the file ...
 
