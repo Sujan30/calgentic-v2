@@ -149,7 +149,7 @@ def login():
         client_secret = os.getenv('google_client_secret')
         
         # Set the redirect URI based on the environment
-        redirect_uri = os.getenv('redirect_url', f"{FRONTEND_URL}auth/callback")
+        redirect_uri = os.getenv('redirect_url', f"{FRONTEND_URL}/auth/callback")
         
         # Create the OAuth flow
         flow = InstalledAppFlow.from_client_config(
@@ -191,11 +191,15 @@ def callback():
     try:
         # Exchange code for tokens
         token_endpoint = "https://oauth2.googleapis.com/token"
+        redirect_uri = os.getenv('redirect_url', f"{FRONTEND_URL}/auth/callback")
+        
+        logger.info(f"Using redirect URI: {redirect_uri}")
+        
         data = {
             'code': code,
             'client_id': os.getenv('google_client_id'),
             'client_secret': os.getenv('google_client_secret'),
-            'redirect_uri': url_for('auth_callback', _external=True),
+            'redirect_uri': redirect_uri,
             'grant_type': 'authorization_code'
         }
         
@@ -648,6 +652,23 @@ def handle_check_auth_options():
     """Handle OPTIONS requests for CORS preflight for check-auth"""
     response = app.make_default_options_response()
     return response
+
+# Add a catch-all route to handle frontend routes
+@app.route('/<path:path>')
+def catch_all(path):
+    """Catch-all route to handle frontend routes"""
+    # Check if this is an API route
+    if path.startswith('api/'):
+        return jsonify({"error": "API endpoint not found"}), 404
+        
+    # Special case for auth/callback - this should be handled by the backend
+    if path == 'auth/callback':
+        logger.info("Redirecting auth/callback to /auth/callback")
+        return redirect('/auth/callback?' + request.query_string.decode('utf-8'))
+        
+    # For frontend routes, serve the index.html
+    logger.info(f"Serving frontend route: {path}")
+    return send_from_directory(app.static_folder, 'index.html')
 
 if __name__ == '__main__':
     app.run(debug=True)
