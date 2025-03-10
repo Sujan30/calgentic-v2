@@ -21,6 +21,11 @@ from googleapiclient.errors import HttpError
 # Load environment variables from .env file
 load_dotenv()
 
+# Set up frontend URL based on environment
+FRONTEND_URL = os.getenv('frontend_url', 'http://localhost:8080')
+if FRONTEND_URL.endswith('/'):
+    FRONTEND_URL = FRONTEND_URL[:-1]  # Remove trailing slash if present
+
 app = Flask(__name__)
 
 app.secret_key = os.environ.get("SECRET_KEY") or os.urandom(24)
@@ -45,19 +50,26 @@ CORS(app,
          "http://localhost:8080",
          "http://127.0.0.1:8080", 
          "http://localhost:3000",
-         "http://127.0.0.1:3000", 
-         'https://calgentic.com',
-
+         "http://127.0.0.1:3000",
+         "http://localhost:5000",
+         "http://127.0.0.1:5000",
+         "https://calgentic.com",
+         "https://www.calgentic.com",
+         "https://calgentic.onrender.com"
      ]}})
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Log important configuration
+logger.info(f"FRONTEND_URL set to: {FRONTEND_URL}")
+logger.info(f"CORS origins: {app.config.get('CORS_ORIGINS', 'Not directly accessible')}")
+logger.info(f"Running in {'development' if os.getenv('FLASK_ENV') == 'development' else 'production'} mode")
+
 GOOGLE_CLIENT_ID = os.getenv("google_client_id")
 GOOGLE_CLIENT_SECRET = os.getenv("google_client_secret")
 REDIRECT_URI = os.getenv("redirect_url", "http://127.0.0.1:5000/callback")
-FRONTEND_URL = os.getenv("frontend_url", "http://localhost:8080")
 
 logger.info(f"FRONTEND_URL set to: {FRONTEND_URL}")
 
@@ -120,50 +132,53 @@ def onboard(prompt):
 
     return jsonify({"error": "Unknown action_type"}), 400
 
+@app.route('/login')
+def login_redirect():
+    """Redirect /login to /api/login for compatibility"""
+    logger.info("Redirecting from /login to /api/login")
+    return redirect('/api/login')
+
 @app.route('/api/login')
 def login():
     try:
         # Define the OAuth scopes
         SCOPES = ['openid','https://www.googleapis.com/auth/calendar', 'https://www.googleapis.com/auth/userinfo.email', 'https://www.googleapis.com/auth/userinfo.profile']
         
-        # Use the credentials.json file in the root directory
-        client_secret_file = os.getenv('google_client_id_path')
+        # Get the client ID and secret from environment variables
+        client_id = os.getenv('google_client_id')
+        client_secret = os.getenv('google_client_secret')
         
-        # Log the client secret file path for debugging
-        logger.info(f"Using client secret file: {client_secret_file}")
+        # Set the redirect URI based on the environment
+        redirect_uri = os.getenv('redirect_url', f"{FRONTEND_URL}auth/callback")
         
-        if not os.path.exists(client_secret_file):
-            logger.error(f"Client secret file not found at: {client_secret_file}")
-            return jsonify({
-                'error': 'Authentication failed',
-                'message': f"Client secret file not found at: {client_secret_file}"
-            }), 500
+        # Create the OAuth flow
+        flow = InstalledAppFlow.from_client_config(
+            {
+                "installed": {
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+                    "redirect_uris": ["urn:ietf:wg:oauth:2.0:oob", "http://localhost"]
+                }
+            },
+            scopes=SCOPES,
+            redirect_uri=redirect_uri
+        )
         
-        # Create a flow instance to manage the OAuth 2.0 Authorization Grant Flow steps
-        flow = InstalledAppFlow.from_client_secrets_file(
-            client_secret_file,
-            scopes=SCOPES)
-        
-        # Set the redirect URI
-        flow.redirect_uri = url_for('auth_callback', _external=True)
-        logger.info(f"Redirect URI set to: {flow.redirect_uri}")
-        
-        # Generate URL for request to Google's OAuth 2.0 server
-        authorization_url, state = flow.authorization_url(
+        # Generate the authorization URL
+        auth_url, _ = flow.authorization_url(
             access_type='offline',
-            include_granted_scopes='true')
+            include_granted_scopes='true',
+            prompt='consent'
+        )
         
-        # Store the state so the callback can verify the auth server response
-        session['state'] = state
-        logger.info(f"Authorization URL: {authorization_url}")
-        
-        return redirect(authorization_url)
+        # Redirect to the authorization URL
+        return redirect(auth_url)
     except Exception as e:
-        logger.error(f"Error in login route: {str(e)}")
-        return jsonify({
-            'error': 'Authentication failed',
-            'message': str(e)
-        }), 500
+        logger.error(f"Login error: {str(e)}")
+        return jsonify({"error": "Login failed", "message": str(e)}), 500
 
 @app.route('/callback')
 def callback():
@@ -361,39 +376,34 @@ def api_logout():
 
 @app.after_request
 def after_request(response):
-    """Add CORS headers to all responses"""
-    # Get the origin from the request
-    origin = request.headers.get('Origin', '')
-    
-    # Check if the origin is in our allowed origins
-    allowed_origins = [
-        "http://localhost:8080",
-        "http://127.0.0.1:8080", 
-        "http://localhost:3000",
-        "http://127.0.0.1:3000"
-    ]
-    
-    if origin in allowed_origins:
-        response.headers.add('Access-Control-Allow-Origin', origin)
-    else:
-        # Default to the first allowed origin if the request origin is not in our list
-        response.headers.add('Access-Control-Allow-Origin', allowed_origins[0])
-    
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With')
-    response.headers.add('Access-Control-Allow-Methods', 'GET, PUT, POST, DELETE, OPTIONS')
+    # Add CORS headers to every response
+    response.headers.add('Access-Control-Allow-Origin', request.headers.get('Origin', '*'))
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
     response.headers.add('Access-Control-Allow-Credentials', 'true')
-    response.headers.add('Access-Control-Expose-Headers', 'Content-Type, X-Auth-Token')
-    response.headers.add('Vary', 'Origin, Access-Control-Request-Headers, Access-Control-Request-Method')
+    response.headers.add('Access-Control-Max-Age', '3600')
     
-    # Ensure content type is set for JSON responses
-    if response.mimetype == 'application/json' and 'Content-Type' not in response.headers:
-        response.headers.add('Content-Type', 'application/json')
+    # Set SameSite attribute for cookies
+    if 'Set-Cookie' in response.headers:
+        cookies = response.headers.getlist('Set-Cookie')
+        new_cookies = []
+        for cookie in cookies:
+            if 'SameSite=' not in cookie:
+                cookie += '; SameSite=None; Secure'
+            new_cookies.append(cookie)
+        response.headers.pop('Set-Cookie')
+        for cookie in new_cookies:
+            response.headers.add('Set-Cookie', cookie)
+    
+    # Log the response for debugging
+    logger.debug(f"Response headers: {dict(response.headers)}")
     
     return response
 
-def generate_new_token(refresh_token):
-    """Generate a new access token using the refresh token"""
+def refresh_google_token(refresh_token):
+    """Refresh an expired Google OAuth token"""
     try:
+        logger.info("Attempting to refresh expired token")
         token_endpoint = "https://oauth2.googleapis.com/token"
         data = {
             'client_id': os.getenv('google_client_id'),
@@ -401,14 +411,59 @@ def generate_new_token(refresh_token):
             'refresh_token': refresh_token,
             'grant_type': 'refresh_token'
         }
+        
         response = requests.post(token_endpoint, data=data)
+        
         if not response.ok:
-            raise Exception(f"Token refresh failed: {response.text}")
+            logger.error(f"Token refresh failed: {response.status_code} - {response.text}")
+            return None
+            
         tokens = response.json()
+        logger.info("Token refreshed successfully")
+        
+        # Update the session with the new token
+        if 'tokens' in session:
+            session['tokens']['access_token'] = tokens.get('access_token')
+            session['tokens']['expires_at'] = time.time() + tokens.get('expires_in', 3600)
+            session.modified = True
+            
         return tokens.get('access_token')
     except Exception as e:
         logger.error(f"Error refreshing token: {str(e)}")
-        raise
+        return None
+
+def get_valid_access_token():
+    """Get a valid access token, refreshing if necessary"""
+    try:
+        # Check if we have tokens in the session
+        if 'tokens' not in session:
+            logger.error("No tokens in session")
+            return None
+            
+        tokens = session['tokens']
+        
+        # Check if the token is expired
+        if time.time() > tokens.get('expires_at', 0):
+            logger.info("Token expired, attempting to refresh")
+            refresh_token = tokens.get('refresh_token')
+            
+            if not refresh_token:
+                logger.error("No refresh token available")
+                return None
+                
+            # Try to refresh the token
+            new_access_token = refresh_google_token(refresh_token)
+            if not new_access_token:
+                logger.error("Failed to refresh token")
+                return None
+                
+            return new_access_token
+        
+        # Token is still valid
+        return tokens.get('access_token')
+    except Exception as e:
+        logger.error(f"Error getting valid access token: {str(e)}")
+        return None
 
 @app.route('/refresh-token', methods=['POST'])
 def refresh_token():
@@ -419,7 +474,7 @@ def refresh_token():
     # Validate refresh token
     try:
         # Generate new access token
-        new_access_token = generate_new_token(refresh_token)
+        new_access_token = get_valid_access_token()
         response = jsonify({"success": True})
         response.set_cookie('access_token', new_access_token, httponly=True, secure=True)
         return response
@@ -483,6 +538,116 @@ def test_cookie():
     )
     
     return resp
+
+# Add a simple test endpoint
+@app.route('/api/ping', methods=['GET'])
+def ping():
+    """Simple endpoint to test API connectivity"""
+    logger.info(f"Ping received from: {request.remote_addr}, Origin: {request.headers.get('Origin', 'No origin')}")
+    return jsonify({
+        "status": "success",
+        "message": "API is working!",
+        "timestamp": datetime.now().isoformat(),
+        "cors_enabled": True
+    })
+
+# Add a POST endpoint for /api/prompt
+@app.route('/api/prompt', methods=['POST'])
+def handle_prompt():
+    """Handle prompt requests from the frontend"""
+    try:
+        # Get the prompt from the request body
+        data = request.json
+        if not data or 'prompt' not in data:
+            return jsonify({"error": "No prompt provided"}), 400
+            
+        prompt = data['prompt']
+        logger.info(f"Received prompt: {prompt}")
+        
+        # Make sure we have a valid token before processing the prompt
+        access_token = get_valid_access_token()
+        if not access_token:
+            return jsonify({"error": "Not authenticated or token expired"}), 401
+        
+        # Process the prompt using the existing function
+        try:
+            response = main.promptToEvent(prompt)
+            logger.info(f"Prompt response: {response}")
+        except Exception as e:
+            logger.error(f"Error in promptToEvent: {str(e)}")
+            return jsonify({"error": f"Failed to process prompt: {str(e)}"}), 500
+        
+        # Check if response contains an error
+        if isinstance(response, dict) and 'error' in response:
+            return jsonify(response), 400
+            
+        # Check if response is a boolean (indicating success/failure)
+        if isinstance(response, bool):
+            return jsonify({
+                "success": response,
+                "message": "Prompt processed" if response else "Failed to process prompt"
+            })
+            
+        # Check if response has the expected structure
+        if not isinstance(response, dict) or 'action_type' not in response:
+            return jsonify({
+                "success": True,
+                "message": "Prompt processed but response format is unexpected",
+                "data": response
+            })
+        
+        # Handle different action types
+        try:
+            if response['action_type'] == 'create':
+                if not isinstance(response.get('eventParams', []), list) or len(response['eventParams']) == 0:
+                    return jsonify({"error": "No event parameters provided"}), 400
+                    
+                formatted_event = main.formatEvent(response['eventParams'][0])
+                if not formatted_event:
+                    return jsonify({"error": "Failed to format event"}), 400
+                    
+                return jsonify({
+                    "success": True,
+                    "message": formatted_event.get('message', 'Event created'),
+                    "data": formatted_event
+                })
+            elif response['action_type'] == 'view':
+                if 'query_details' not in response:
+                    return jsonify({"error": "No query details provided"}), 400
+                    
+                view_response = main.findEvent(response['query_details'])
+                return jsonify({
+                    "success": True,
+                    "message": view_response.get('message', 'Events found'),
+                    "data": view_response
+                })
+            else:
+                return jsonify({
+                    "success": True,
+                    "message": response.get('message', 'Prompt processed'),
+                    "data": response
+                })
+        except Exception as e:
+            logger.error(f"Error processing response: {str(e)}")
+            return jsonify({"error": f"Error processing response: {str(e)}"}), 500
+        
+    except Exception as e:
+        logger.error(f"Error processing prompt: {str(e)}")
+        return jsonify({"error": f"Failed to process prompt: {str(e)}"}), 500
+
+# Add explicit handling for OPTIONS requests
+@app.route('/api/prompt', methods=['OPTIONS'])
+def handle_prompt_options():
+    """Handle OPTIONS requests for CORS preflight"""
+    response = app.make_default_options_response()
+    return response
+
+# Add explicit handling for OPTIONS requests for check-auth
+@app.route('/api/check-auth', methods=['OPTIONS'])
+def handle_check_auth_options():
+    """Handle OPTIONS requests for CORS preflight for check-auth"""
+    response = app.make_default_options_response()
+    return response
 
 if __name__ == '__main__':
     app.run(debug=True)

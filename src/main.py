@@ -83,7 +83,7 @@ def createEvent(summary, description, start, end, calendarId='primary'):
       
       # Call calendarAuth() to ensure credentials are initialized
       if creds is None:
-          calendarAuth()
+        calendarAuth()
       
       # Initialize service if not already done
       if service is None and creds is not None:
@@ -326,7 +326,11 @@ def formatEvent(event):
         for key in required_keys:
             if key not in event:
                 print(f"Missing required key: {key}")
-                return False
+                return {
+                    "success": False,
+                    "message": f"Missing required key: {key}",
+                    "error": f"Event data is missing the required '{key}' field"
+                }
         
         summary = event['summary']
         description = event['description']
@@ -344,18 +348,41 @@ def formatEvent(event):
         try:
             result = createEvent(summary, description, start, end, calendarId)
             if result:
-                return True
+                return {
+                    "success": True,
+                    "message": "Event created successfully",
+                    "event": {
+                        "summary": summary,
+                        "description": description,
+                        "start": start,
+                        "end": end,
+                        "calendarId": calendarId,
+                        "link": result.get('htmlLink', '')
+                    }
+                }
             else:
                 print("Error in createEvent function")
-                return False
+                return {
+                    "success": False,
+                    "message": "Failed to create event",
+                    "error": "Unknown error in createEvent function"
+                }
         except Exception as e:
             print(f"Error in createEvent: {str(e)}")
-            return False
+            return {
+                "success": False,
+                "message": "Error creating event",
+                "error": str(e)
+            }
     except Exception as e:
         print(f"Error in formatEvent: {str(e)}")
         import traceback
         traceback.print_exc()  # Print the full stack trace
-        return False
+        return {
+            "success": False,
+            "message": "Error formatting event",
+            "error": str(e)
+        }
 
 def findEvent(query_details):
     """Finds an event based on provided criteria."""
@@ -420,7 +447,11 @@ def findEvent(query_details):
         events = events_result.get('items', [])
         
         if not events:
-            return {"message": "No events found."}
+            return {
+                "success": True,
+                "message": "No events found for the specified criteria.",
+                "events": []
+            }
         
         # Format the events for response
         formatted_events = []
@@ -434,14 +465,26 @@ def findEvent(query_details):
             }
             formatted_events.append(formatted_event)
         
-        return {"events": formatted_events}
+        return {
+            "success": True,
+            "message": f"Found {len(formatted_events)} events.",
+            "events": formatted_events
+        }
         
     except HttpError as error:
         print(f'An error occurred: {error}')
-        return {"error": f"An error occurred: {str(error)}"}
+        return {
+            "success": False,
+            "message": "Failed to retrieve events",
+            "error": f"An error occurred: {str(error)}"
+        }
     except Exception as e:
         print(f'Unexpected error: {e}')
-        return {"error": f"Unexpected error: {str(e)}"}
+        return {
+            "success": False,
+            "message": "Failed to retrieve events",
+            "error": f"Unexpected error: {str(e)}"
+        }
 
 
 
