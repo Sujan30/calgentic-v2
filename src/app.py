@@ -1,7 +1,7 @@
 import json
 import os
 # import main  # Removing this import to fix deployment error
-from src import main
+import main
 import requests
 from flask import Flask, send_from_directory, jsonify, request, redirect, session, url_for
 from google.oauth2 import service_account
