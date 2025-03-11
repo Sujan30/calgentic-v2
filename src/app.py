@@ -516,6 +516,11 @@ def auth_callback():
         logger.error(f"Error in auth_callback: {str(e)}")
         return redirect(f"{FRONTEND_URL}/login?error=callback_error&message={str(e)}")
 
+@app.route('/test')
+def test():
+    return "hola render, server is a okay"
+
+
 @app.route('/api/test-cookie', methods=['GET'])
 def test_cookie():
     """Test endpoint to set and check cookies"""
