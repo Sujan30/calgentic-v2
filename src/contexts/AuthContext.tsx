@@ -2,26 +2,15 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { toast } from 'sonner';
 
 // Define the base URL for your API - dynamically set based on environment
-// Check if we're in development or production
-const isDevelopment = 
-  window.location.hostname === 'localhost' || 
-  window.location.hostname === '127.0.0.1' ||
-  window.location.protocol === 'http:'; // Production should use https
-
-console.log('Current hostname:', window.location.hostname);
-console.log('Current protocol:', window.location.protocol);
-console.log('isDevelopment:', isDevelopment);
-
+const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 const API_BASE_URL = isDevelopment 
   ? 'http://127.0.0.1:5000/api'  // Local development backend
   : 'https://calgentic.onrender.com/api';  // Production backend
 
+// ... rest of the file ...
 const SERVER_BASE_URL = isDevelopment
   ? 'http://127.0.0.1:5000'
   : 'https://calgentic.onrender.com'; 
-
-console.log('API_BASE_URL:', API_BASE_URL);
-console.log('SERVER_BASE_URL:', SERVER_BASE_URL);
 
 interface User {
   id: string;
@@ -65,73 +54,36 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const checkAuth = async (): Promise<boolean> => {
     try {
-      console.log('Checking authentication status...');
-      console.log('Current pathname:', window.location.pathname);
-      console.log('API URL:', API_BASE_URL);
-      
       // Check if we're on the auth callback route
       if (window.location.pathname === '/auth/callback') {
-        console.log('On auth callback route, checking URL parameters');
         // Check URL parameters for auth_success
         const urlParams = new URLSearchParams(window.location.search);
         const authSuccess = urlParams.get('auth_success');
         const userEmail = urlParams.get('user');
         
-        console.log('Auth success param:', authSuccess);
-        console.log('User email param:', userEmail);
-        
         if (authSuccess === 'true' && userEmail) {
           // If we have auth_success=true in URL, we can set authenticated immediately
           setIsAuthenticated(true);
-          console.log('Setting authenticated from URL parameters');
           
           // Clean up URL parameters by redirecting to home page
           window.history.replaceState({}, document.title, '/');
           
           // Still check with the server to get full user details
-          try {
-            console.log('Fetching user details from server...');
-            const response = await fetchWithErrorHandling(`${API_BASE_URL}/check-auth`, {
-              method: 'GET',
-              credentials: 'include',
-            });
-            
-            if (response.ok) {
-              const data = await response.json();
-              console.log('Server response:', data);
-              if (data.authenticated) {
-                setUser(data.user);
-                console.log('User details set from server');
-                return true;
-              }
-            } else {
-              console.error('Server returned error:', response.status);
+          const response = await fetchWithErrorHandling(`${API_BASE_URL}/check-auth`, {
+            method: 'GET',
+            credentials: 'include',
+          });
+          
+          if (response.ok) {
+            const data = await response.json();
+            if (data.authenticated) {
+              setUser(data.user);
+              return true;
             }
-          } catch (error) {
-            console.error('Error fetching user details:', error);
-            // Continue anyway since we already know the user is authenticated from URL params
           }
           
           return true;
         }
-      }
-      
-      // First try a simple ping to check connectivity
-      try {
-        console.log('Pinging API to check connectivity...');
-        const pingResponse = await fetchWithErrorHandling(`${API_BASE_URL}/ping`, {
-          method: 'GET',
-          credentials: 'include',
-        });
-        
-        if (pingResponse.ok) {
-          console.log('API ping successful');
-        } else {
-          console.error('API ping failed:', pingResponse.status);
-        }
-      } catch (error) {
-        console.error('API ping error:', error);
-        // Continue with auth check anyway
       }
       
       // Regular auth check
@@ -143,7 +95,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       if (response.ok) {
         const data = await response.json();
-        console.log('Auth check response:', data);
         
         if (data.authenticated) {
           setUser(data.user);
@@ -153,7 +104,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         } else {
           setUser(null);
           setIsAuthenticated(false);
-          console.log('Auth check failed:', data);
+          console.log('Auth check failed:', data.user);
           return false;
         }
       } else {

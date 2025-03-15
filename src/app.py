@@ -495,7 +495,7 @@ def forbidden_error(error):
 
 @app.route('/auth/callback')
 def auth_callback():
-    """Redirect to the main callback handler"""
+    """Handle the callback from Google OAuth"""
     try:
         # Log the request for debugging
         logger.info(f"Auth callback received: {request.url}")
@@ -508,10 +508,83 @@ def auth_callback():
             error_description = request.args.get('error_description', 'Unknown error')
             return redirect(f"{FRONTEND_URL}/login?error={error}&message={error_description}")
         
-        # Redirect to the main callback handler with the query string
-        callback_url = '/callback?' + request.query_string.decode('utf-8')
-        logger.info(f"Redirecting to: {callback_url}")
-        return redirect(callback_url)
+        # Get the code from the request
+        code = request.args.get('code')
+        if not code:
+            logger.error("No code in request")
+            return redirect(f"{FRONTEND_URL}/login?error=no_code")
+              
+        # Process the callback directly here instead of redirecting
+        try:
+            # Exchange code for tokens
+            token_endpoint = "https://oauth2.googleapis.com/token"
+            redirect_uri = os.getenv('redirect_url', f"{FRONTEND_URL}/auth/callback")
+            
+            logger.info(f"Using redirect URI for token exchange: {redirect_uri}")
+            
+            data = {
+                'code': code,
+                'client_id': os.getenv('google_client_id'),
+                'client_secret': os.getenv('google_client_secret'),
+                'redirect_uri': redirect_uri,
+                'grant_type': 'authorization_code'
+            }
+            
+            logger.info("Exchanging code for tokens")
+            response = requests.post(token_endpoint, data=data)
+            
+            if not response.ok:
+                logger.error(f"Token exchange failed: {response.status_code} - {response.text}")
+                return redirect(f"{FRONTEND_URL}/login?error=token_exchange_failed&message={response.text}")
+                
+            tokens = response.json()
+            logger.info("Received tokens")
+            
+            # Get user info from ID token
+            id_token = tokens.get('id_token')
+            if not id_token:
+                logger.error("No ID token received")
+                return redirect(f"{FRONTEND_URL}/login?error=no_id_token")
+                
+            # Decode the ID token to get user info
+            user_data = jwt.decode(id_token, options={"verify_signature": False})
+            logger.info(f"User authenticated: {user_data.get('email')}")
+            
+            # Store user info in session
+            session.permanent = True
+            session['user'] = {
+                'id': user_data.get('sub'),
+                'email': user_data.get('email'),
+                'name': user_data.get('name'),
+                'picture': user_data.get('picture'),
+                'authenticated': True,
+                'login_time': datetime.now().isoformat()
+            }
+            
+            # Store tokens in session
+            session['tokens'] = {
+                'access_token': tokens.get('access_token'),
+                'refresh_token': tokens.get('refresh_token', ''),
+                'id_token': tokens.get('id_token'),
+                'expires_at': time.time() + tokens.get('expires_in', 3600)
+            }
+            
+            # Determine where to redirect based on environment
+            user_email = user_data.get('email', '')
+            
+            # In production, redirect directly to dashboard to avoid SPA routing issues
+            if os.getenv('FLASK_ENV') != 'development':
+                logger.info(f"Production environment detected, redirecting directly to dashboard")
+                return redirect(f"{FRONTEND_URL}/dashboard")
+            
+            # In development, use the normal auth callback flow
+            redirect_url = f"{FRONTEND_URL}/auth/callback?auth_success=true&user={user_email}"
+            logger.info(f"Development environment detected, redirecting to: {redirect_url}")
+            return redirect(redirect_url)
+            
+        except Exception as e:
+            logger.error(f"Error processing callback: {str(e)}")
+            return redirect(f"{FRONTEND_URL}/login?error=callback_processing_error&message={str(e)}")
     except Exception as e:
         logger.error(f"Error in auth_callback: {str(e)}")
         return redirect(f"{FRONTEND_URL}/login?error=callback_error&message={str(e)}")
@@ -670,10 +743,105 @@ def catch_all(path):
     if path == 'auth/callback':
         logger.info("Redirecting auth/callback to /auth/callback")
         return redirect('/auth/callback?' + request.query_string.decode('utf-8'))
+    
+    # Special case for auth-callback.html - serve the static fallback file
+    if path == 'auth-callback.html':
+        logger.info("Serving auth-callback.html fallback file")
+        return send_from_directory(app.static_folder, 'auth-callback.html')
         
     # For frontend routes, serve the index.html
     logger.info(f"Serving frontend route: {path}")
     return send_from_directory(app.static_folder, 'index.html')
+
+@app.route('/api/exchange-code', methods=['POST'])
+def exchange_code():
+    """Exchange an authorization code for tokens"""
+    try:
+        # Get the code from the request
+        data = request.json
+        if not data or 'code' not in data:
+            logger.error("No code provided in request")
+            return jsonify({"error": "No code provided"}), 400
+            
+        code = data['code']
+        logger.info(f"Exchanging code for tokens: {code[:10]}...")
+        
+        # Exchange code for tokens
+        token_endpoint = "https://oauth2.googleapis.com/token"
+        redirect_uri = os.getenv('redirect_url', f"{FRONTEND_URL}/auth/callback")
+        
+        logger.info(f"Using redirect URI: {redirect_uri}")
+        
+        token_data = {
+            'code': code,
+            'client_id': os.getenv('google_client_id'),
+            'client_secret': os.getenv('google_client_secret'),
+            'redirect_uri': redirect_uri,
+            'grant_type': 'authorization_code'
+        }
+        
+        logger.info("Exchanging code for tokens")
+        response = requests.post(token_endpoint, data=token_data)
+        
+        if not response.ok:
+            logger.error(f"Token exchange failed: {response.status_code} - {response.text}")
+            return jsonify({"error": f"Token exchange failed: {response.text}"}), response.status_code
+            
+        tokens = response.json()
+        logger.info("Received tokens")
+        
+        # Get user info from ID token
+        id_token = tokens.get('id_token')
+        if not id_token:
+            logger.error("No ID token received")
+            return jsonify({"error": "No ID token received"}), 400
+            
+        # Decode the ID token to get user info
+        user_data = jwt.decode(id_token, options={"verify_signature": False})
+        logger.info(f"User authenticated: {user_data.get('email')}")
+        
+        # Store user info in session
+        session.permanent = True
+        session['user'] = {
+            'id': user_data.get('sub'),
+            'email': user_data.get('email'),
+            'name': user_data.get('name'),
+            'picture': user_data.get('picture'),
+            'authenticated': True,
+            'login_time': datetime.now().isoformat()
+        }
+        
+        # Store tokens in session
+        session['tokens'] = {
+            'access_token': tokens.get('access_token'),
+            'refresh_token': tokens.get('refresh_token', ''),
+            'id_token': tokens.get('id_token'),
+            'expires_at': time.time() + tokens.get('expires_in', 3600)
+        }
+        
+        return jsonify({
+            "success": True,
+            "user": {
+                "email": user_data.get('email'),
+                "name": user_data.get('name')
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in exchange_code: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/auth/callback/dashboard')
+def auth_callback_dashboard():
+    """Direct route to dashboard after authentication"""
+    # Check if user is authenticated
+    if 'user' not in session or 'tokens' not in session:
+        logger.error("User not authenticated, redirecting to login")
+        return redirect(f"{FRONTEND_URL}/login?error=not_authenticated")
+    
+    # Redirect to dashboard
+    logger.info("User authenticated, redirecting to dashboard")
+    return redirect(f"{FRONTEND_URL}/dashboard")
 
 if __name__ == '__main__':
     app.run(debug=True)
