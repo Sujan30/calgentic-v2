@@ -1,16 +1,15 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { toast } from 'sonner';
 
-// Define the base URL for your API - dynamically set based on environment
-const isDevelopment = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-const API_BASE_URL = isDevelopment 
-  ? 'http://127.0.0.1:5000/api'  // Local development backend
-  : 'https://calgentic.onrender.com/api';  // Production backend
+// Load environment variables
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "https://calgentic.onrender.com/api";
+const SERVER_BASE_URL = import.meta.env.VITE_SERVER_BASE_URL || "https://calgentic.onrender.com";
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "YOUR_GOOGLE_CLIENT_ID_HERE";
+const FRONTEND_REDIRECT_URI = import.meta.env.VITE_FRONTEND_REDIRECT_URI || "https://www.calgentic.com/auth/callback";
 
-// ... rest of the file ...
-const SERVER_BASE_URL = isDevelopment
-  ? 'http://127.0.0.1:5000'
-  : 'https://calgentic.onrender.com'; 
+console.log("API_BASE_URL:", API_BASE_URL);
+console.log("SERVER_BASE_URL:", SERVER_BASE_URL);
+console.log("FRONTEND_REDIRECT_URI:", FRONTEND_REDIRECT_URI);
 
 interface User {
   id: string;
@@ -30,93 +29,62 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Helper function for API calls with better error handling
-const fetchWithErrorHandling = async (url: string, options: RequestInit = {}) => {
-  try {
-    const response = await fetch(url, options);
-    return response;
-  } catch (error) {
-    console.error(`Fetch error for ${url}:`, error);
-    // Add more detailed error information
-    if (error instanceof TypeError && error.message === 'Failed to fetch') {
-      console.error('This might be a CORS issue or the server is not responding');
-      console.error('Check that the server is running and CORS is properly configured');
-      console.error('Current API URL:', url);
-    }
-    throw error;
-  }
-};
-
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
+  // Function to check authentication
   const checkAuth = async (): Promise<boolean> => {
     try {
-      // Check if we're on the auth callback route
-      if (window.location.pathname === '/auth/callback') {
-        // Check URL parameters for auth_success
-        const urlParams = new URLSearchParams(window.location.search);
-        const authSuccess = urlParams.get('auth_success');
-        const userEmail = urlParams.get('user');
-        
-        if (authSuccess === 'true' && userEmail) {
-          // If we have auth_success=true in URL, we can set authenticated immediately
-          setIsAuthenticated(true);
-          
-          // Clean up URL parameters by redirecting to home page
-          window.history.replaceState({}, document.title, '/');
-          
-          // Still check with the server to get full user details
-          const response = await fetchWithErrorHandling(`${API_BASE_URL}/check-auth`, {
-            method: 'GET',
-            credentials: 'include',
-          });
-          
-          if (response.ok) {
-            const data = await response.json();
-            if (data.authenticated) {
-              setUser(data.user);
-              return true;
-            }
-          }
-          
-          return true;
+      const urlParams = new URLSearchParams(window.location.search);
+      const authSuccess = urlParams.get('auth_success');
+      const userEmail = urlParams.get('user');
+      const code = urlParams.get("code");
+
+      if (authSuccess === 'true' && userEmail) {
+        setIsAuthenticated(true);
+      }
+
+      if (code) {
+        console.log("OAuth code detected, sending to backend...");
+        const response = await fetch(`${SERVER_BASE_URL}/auth/callback?code=${code}`, {
+          method: "GET",
+          credentials: "include",
+        });
+
+        if (response.ok) {
+          console.log("OAuth code successfully processed");
+          window.history.replaceState({}, document.title, window.location.pathname);
+        } else {
+          console.error("Failed to process OAuth code:", response.status);
         }
       }
-      
-      // Regular auth check
-      console.log('Performing regular auth check...');
-      const response = await fetchWithErrorHandling(`${API_BASE_URL}/check-auth`, {
-        method: 'GET',
-        credentials: 'include',
+
+      const response = await fetch(`${API_BASE_URL}/check-auth`, {
+        method: "GET",
+        credentials: "include",
       });
 
       if (response.ok) {
         const data = await response.json();
-        
         if (data.authenticated) {
           setUser(data.user);
           setIsAuthenticated(true);
-          console.log('Auth check successful:', data.user);
           return true;
         } else {
           setUser(null);
           setIsAuthenticated(false);
-          console.log('Auth check failed:', data.user);
           return false;
         }
       } else {
-        // Handle non-200 responses
-        console.error('Auth check failed:', response.status);
+        console.error("Auth check failed:", response.status);
         setUser(null);
         setIsAuthenticated(false);
         return false;
       }
     } catch (error) {
-      // Handle network errors
-      console.error('Auth check error:', error);
+      console.error("Auth check error:", error);
       setUser(null);
       setIsAuthenticated(false);
       return false;
@@ -129,41 +97,43 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     checkAuth();
   }, []);
 
+  // Google OAuth login function
   const login = () => {
-    // This should point to the correct login endpoint on your backend
-    window.location.href = `${SERVER_BASE_URL}/api/login`;
+    const SCOPES = [
+      "openid",
+      "https://www.googleapis.com/auth/calendar",
+      "https://www.googleapis.com/auth/userinfo.email",
+      "https://www.googleapis.com/auth/userinfo.profile",
+    ];
+
+    const googleLoginUrl = `https://accounts.google.com/o/oauth2/auth?client_id=${GOOGLE_CLIENT_ID}&redirect_uri=${encodeURIComponent(FRONTEND_REDIRECT_URI)}&response_type=code&scope=${encodeURIComponent(SCOPES.join(" "))}&access_type=offline&prompt=consent&include_granted_scopes=true`;
+
+    console.log("Redirecting to Google OAuth:", googleLoginUrl);
+    window.location.href = googleLoginUrl;
   };
 
+  // Logout function
   const logout = async () => {
     try {
-      const response = await fetchWithErrorHandling(`${API_BASE_URL}/logout`, {
-        method: 'POST',
-        credentials: 'include',
+      const response = await fetch(`${SERVER_BASE_URL}/auth/logout`, {
+        method: "GET", // Your backend uses GET for logout
+        credentials: "include",
       });
 
       if (response.ok) {
         setUser(null);
         setIsAuthenticated(false);
-        toast.success('Logged out successfully');
+        toast.success("Logged out successfully");
       } else {
-        toast.error('Failed to logout');
+        toast.error("Failed to log out");
       }
     } catch (error) {
-      toast.error('Network error during logout');
+      toast.error("Network error during logout");
     }
   };
 
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        isAuthenticated,
-        isLoading,
-        login,
-        logout,
-        checkAuth,
-      }}
-    >
+    <AuthContext.Provider value={{ user, isAuthenticated, isLoading, login, logout, checkAuth }}>
       {children}
     </AuthContext.Provider>
   );
@@ -172,7 +142,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 export const useAuth = () => {
   const context = useContext(AuthContext);
   if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
+    throw new Error("useAuth must be used within an AuthProvider");
   }
   return context;
-}; 
+};
