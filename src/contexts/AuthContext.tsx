@@ -40,27 +40,23 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const urlParams = new URLSearchParams(window.location.search);
       const authSuccess = urlParams.get('auth_success');
       const userEmail = urlParams.get('user');
-      const code = urlParams.get("code");
 
       if (authSuccess === 'true' && userEmail) {
+        // Create a basic user object from the email
+        const basicUser = {
+          id: userEmail,
+          name: userEmail.split('@')[0],
+          email: userEmail
+        };
+        setUser(basicUser);
         setIsAuthenticated(true);
+        
+        // Clear the URL parameters but maintain the path
+        window.history.replaceState({}, document.title, window.location.pathname);
+        return true;
       }
 
-      if (code) {
-        console.log("OAuth code detected, sending to backend...");
-        const response = await fetch(`${SERVER_BASE_URL}/auth/callback?code=${code}`, {
-          method: "GET",
-          credentials: "include",
-        });
-
-        if (response.ok) {
-          console.log("OAuth code successfully processed");
-          window.history.replaceState({}, document.title, window.location.pathname);
-        } else {
-          console.error("Failed to process OAuth code:", response.status);
-        }
-      }
-
+      // Only make the API call if we don't have auth_success parameters
       const response = await fetch(`${API_BASE_URL}/check-auth`, {
         method: "GET",
         credentials: "include",
