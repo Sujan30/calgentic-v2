@@ -4,8 +4,8 @@ import { toast } from 'sonner';
 // Load environment variables
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "https://calgentic.onrender.com/api";
 const SERVER_BASE_URL = import.meta.env.VITE_SERVER_BASE_URL || "https://calgentic.onrender.com";
-const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "YOUR_GOOGLE_CLIENT_ID_HERE";
-const FRONTEND_REDIRECT_URI = import.meta.env.VITE_FRONTEND_REDIRECT_URI || "https://www.calgentic.com/auth/callback";
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "543793899909-bmpj50nlv128esp3ca44eaan2vlm8g82.apps.googleusercontent.com";
+const FRONTEND_REDIRECT_URI = import.meta.env.VITE_FRONTEND_REDIRECT_URI || "https://calgentic.onrender.com/auth/callback";
 
 console.log("API_BASE_URL:", API_BASE_URL);
 console.log("SERVER_BASE_URL:", SERVER_BASE_URL);
