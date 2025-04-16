@@ -30,15 +30,23 @@ app.config['SESSION_COOKIE_DOMAIN'] = None
 app.config['SESSION_COOKIE_PATH'] = '/'
 app.config['SESSION_COOKIE_NAME'] = 'calgentic_session'
 
-# Enable CORS for allowed origins
-CORS(app, supports_credentials=True, resources={r"/*": {"origins": [
-    "http://localhost:8080",
-    "http://127.0.0.1:8080",
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "https://calgentic.com",
-    "https://www.calgentic.com"
-]}})
+# Configure CORS
+CORS(app, resources={
+    r"/api/*": {
+        "origins": [
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "http://localhost:5001",
+            "http://127.0.0.1:5001",
+            "https://calgentic.com",
+            "https://www.calgentic.com",
+            "https://calgentic.onrender.com"
+        ],
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"],
+        "supports_credentials": True
+    }
+})
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -47,7 +55,7 @@ logger = logging.getLogger(__name__)
 # Load Google OAuth credentials from environment variables
 GOOGLE_CLIENT_ID = os.getenv("google_client_id")
 GOOGLE_CLIENT_SECRET = os.getenv("google_client_secret")
-frontend_url = os.getenv('frontend_url', 'http://127.0.0.1:5000')
+frontend_url = os.getenv('frontend_url', 'http://127.0.0.1:5001')
 redirect_url = os.getenv('redirect_url', f"{frontend_url}/auth/callback")
 
 logger.info(f"FRONTEND_URL set to: {frontend_url}")
@@ -68,7 +76,7 @@ if not os.path.exists(client_secret_file):
                 "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
                 "client_secret": GOOGLE_CLIENT_SECRET,
                 "redirect_uris": [
-                    "http://localhost",
+                    "http://localhost:8080",
                     "https://calgentic.com",
                     "https://www.calgentic.com"
                 ]
@@ -92,7 +100,7 @@ def log_request_info():
 def index():
     return send_from_directory(app.static_folder, 'index.html')
 
-@app.route('/prompt/<prompt>', methods=['GET'])
+@app.route('/api/prompt/<prompt>', methods=['GET'])
 def onboard(prompt):
     try:
         logger.info(f"Processing prompt: {prompt}")
@@ -349,25 +357,10 @@ def api_logout():
 
 @app.after_request
 def after_request(response):
-    origin = request.headers.get('Origin', '')
-    allowed_origins = [
-        "http://localhost:8080",
-        "http://127.0.0.1:8080",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000"
-    ]
-    if origin in allowed_origins:
-        response.headers.add('Access-Control-Allow-Origin', origin)
-    else:
-        response.headers.add('Access-Control-Allow-Origin', allowed_origins[0])
-
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With')
-    response.headers.add('Access-Control-Allow-Methods', 'GET, PUT, POST, DELETE, OPTIONS')
+    response.headers.add('Access-Control-Allow-Origin', request.headers.get('Origin', '*'))
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
     response.headers.add('Access-Control-Allow-Credentials', 'true')
-    response.headers.add('Access-Control-Expose-Headers', 'Content-Type, X-Auth-Token')
-    response.headers.add('Vary', 'Origin, Access-Control-Request-Headers, Access-Control-Request-Method')
-    if response.mimetype == 'application/json' and 'Content-Type' not in response.headers:
-        response.headers.add('Content-Type', 'application/json')
     return response
 
 def generate_new_token(refresh_token):
@@ -433,4 +426,4 @@ def serve_static(path):
 
 if __name__ == '__main__':
     # In production, use a proper WSGI server (e.g., Gunicorn or uWSGI)
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=False)
+    app.run(host="0.0.0.0", port=5001, debug=True)

@@ -209,10 +209,18 @@ def askPrompt():
 
 
 
+openai_key = os.getenv('openai_key2')
+if not openai_key:
+    print("OpenAI API key not found in environment variables")
+else:
+    print("OpenAI API key found in environment variables")
+    
 
 def promptToEvent(prompt):
+    global openai_key
     
-    client = OpenAI(api_key=os.getenv('openai_key'))
+    
+    client = OpenAI(api_key=openai_key)
     
     # Get current date and timezone for reference
     local_tz = datetime.datetime.now().astimezone().tzinfo
