@@ -35,12 +35,17 @@ const Dashboard = () => {
       
       if (result.error) {
         toast.error(result.error);
+        console.error("Error from server:", result.error);
       } else if (result.message) {
         toast.success("Request processed successfully!");
       }
     } catch (error) {
-      toast.error("Failed to process your request. Please try again.");
       console.error("Error processing request:", error);
+      if (error instanceof Error) {
+        toast.error(`Error: ${error.message}`);
+      } else {
+        toast.error("Failed to process your request. Please try again.");
+      }
     } finally {
       setIsLoading(false);
     }

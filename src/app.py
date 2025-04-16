@@ -94,36 +94,55 @@ def index():
 
 @app.route('/prompt/<prompt>', methods=['GET'])
 def onboard(prompt):
-    response = main.promptToEvent(prompt)
-    if isinstance(response, dict) and 'error' in response:
-        return jsonify(response), 400
-    response_dict = response
-    if 'action_type' not in response_dict:
-        return jsonify({"error": "Missing action_type in response"}), 400
+    try:
+        logger.info(f"Processing prompt: {prompt}")
+        response = main.promptToEvent(prompt)
+        
+        if isinstance(response, dict) and 'error' in response:
+            logger.error(f"Error in prompt processing: {response['error']}")
+            return jsonify(response), 400
+            
+        response_dict = response
+        if 'action_type' not in response_dict:
+            logger.error("Missing action_type in response")
+            return jsonify({"error": "Invalid response format from AI service"}), 400
 
-    if response_dict['action_type'] == 'create':
-        if 'eventParams' not in response_dict or 'eventCompletion' not in response_dict:
-            return jsonify({"error": "Missing eventParams or eventCompletion"}), 400
-        eventParams = response_dict['eventParams']
-        if isinstance(eventParams, list) and len(eventParams) > 0:
-            event_data = eventParams[0]
+        if response_dict['action_type'] == 'create':
+            if 'eventParams' not in response_dict or 'eventCompletion' not in response_dict:
+                logger.error("Missing eventParams or eventCompletion in create action")
+                return jsonify({"error": "Invalid event creation parameters"}), 400
+            eventParams = response_dict['eventParams']
+            if isinstance(eventParams, list) and len(eventParams) > 0:
+                event_data = eventParams[0]
+                try:
+                    if main.formatEvent(event_data):
+                        message = response_dict['eventCompletion']
+                        return jsonify({"message": message, "success": True})
+                    else:
+                        logger.error("Failed to format event")
+                        return jsonify({"error": "Failed to format event data"}), 400
+                except Exception as e:
+                    logger.error(f"Exception in formatEvent: {str(e)}")
+                    return jsonify({"error": f"Error processing event: {str(e)}"}), 400
+            else:
+                logger.error("eventParams is not in the expected format")
+                return jsonify({"error": "Invalid event parameters format"}), 400
+        elif response_dict['action_type'] == 'view':
+            if 'query_details' not in response_dict:
+                logger.error("Missing query_details in view action")
+                return jsonify({"error": "Missing event query parameters"}), 400
+            query_details = response_dict['query_details']
             try:
-                if main.formatEvent(event_data):
-                    message = response_dict['eventCompletion']
-                    return jsonify({"message": message, "success": True})
-                else:
-                    return jsonify({"error": "Failed to format event"}), 400
+                return jsonify(main.findEvent(query_details=query_details))
             except Exception as e:
-                return jsonify({"error": f"Exception in formatEvent: {str(e)}"}), 400
+                logger.error(f"Error in findEvent: {str(e)}")
+                return jsonify({"error": f"Error finding events: {str(e)}"}), 400
         else:
-            return jsonify({"error": "eventParams is not in the expected format"}), 400
-    elif response_dict['action_type'] == 'view':
-        if 'query_details' not in response_dict:
-            return jsonify({"error": "Missing query_details"}), 400
-        query_details = response_dict['query_details']
-        return jsonify(main.findEvent(query_details=query_details))
-
-    return jsonify({"error": "Unknown action_type"}), 400
+            logger.error(f"Unknown action_type: {response_dict['action_type']}")
+            return jsonify({"error": "Unsupported action type"}), 400
+    except Exception as e:
+        logger.error(f"Unexpected error in prompt endpoint: {str(e)}")
+        return jsonify({"error": "An unexpected error occurred. Please try again."}), 500
 
 @app.route('/api/login')
 def login():

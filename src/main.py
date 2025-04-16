@@ -291,9 +291,16 @@ def promptToEvent(prompt):
     User input: {prompt}
     """
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-4",
         messages=[{"role": "user", "content": modified_prompt}]
     )
+    
+    if not response or not response.choices or not response.choices[0]:
+        print("Invalid response from OpenAI API")
+        return {
+            "error": "Invalid response from AI service",
+            "message": "The AI service returned an invalid response. Please try again."
+        }
     
     content = response.choices[0].message.content
     print(f"data from chatgpt {content}")
