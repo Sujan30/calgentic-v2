@@ -93,7 +93,7 @@ def log_request_info():
 def index():
     return send_from_directory(app.static_folder, 'index.html')
 
-@app.route('prompt/<prompt>', methods=['GET'])
+@app.route('/prompt/<prompt>', methods=['GET'])
 def onboard(prompt):
     try:
         logger.info(f"Processing prompt: {prompt}")
