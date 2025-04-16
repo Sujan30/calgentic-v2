@@ -34,10 +34,11 @@ app.config['SESSION_COOKIE_NAME'] = 'calgentic_session'
 CORS(app, supports_credentials=True, resources={r"/*": {"origins": [
     "http://localhost:8080",
     "http://127.0.0.1:8080",
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
+    "http://localhost:5001",
+    "http://127.0.0.1:5001",
     "https://calgentic.com",
-    "https://www.calgentic.com"
+    "https://www.calgentic.com",
+    "https://calgentic.onrender.com"
 ]}})
 
 # Configure logging
@@ -353,8 +354,11 @@ def after_request(response):
     allowed_origins = [
         "http://localhost:8080",
         "http://127.0.0.1:8080",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000"
+        "http://localhost:5001",
+        "http://127.0.0.1:5001",
+        "https://calgentic.com",
+        "https://www.calgentic.com",
+        "https://calgentic.onrender.com"
     ]
     if origin in allowed_origins:
         response.headers.add('Access-Control-Allow-Origin', origin)
