@@ -38,7 +38,7 @@ CORS(app, supports_credentials=True, resources={r"/*": {"origins": [
     "http://127.0.0.1:5001",
     "https://calgentic.com",
     "https://www.calgentic.com",
-    "https://calgentic.onrender.com"
+    "https://calgentic.onrender.com",
 ]}})
 
 # Configure logging
@@ -93,57 +93,85 @@ def log_request_info():
 def index():
     return send_from_directory(app.static_folder, 'index.html')
 
-@app.route('/prompt/<prompt>', methods=['GET'])
+@app.route('/prompt/<prompt>', methods=['GET', 'OPTIONS'])
 def onboard(prompt):
+    # Handle OPTIONS preflight request
+    if request.method == 'OPTIONS':
+        response = app.make_default_options_response()
+        origin = request.headers.get('Origin', '')
+        allowed_origins = [
+            "http://localhost:8080",
+            "http://127.0.0.1:8080",
+            "http://localhost:5001",
+            "http://127.0.0.1:5001",
+            "https://calgentic.com",
+            "https://www.calgentic.com",
+            "https://calgentic.onrender.com",
+        ]
+        response.headers['Access-Control-Allow-Origin'] = origin if origin in allowed_origins else allowed_origins[0]
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+        response.headers['Access-Control-Max-Age'] = '3600'
+        return response
+    
     try:
         logger.info(f"Processing prompt: {prompt}")
+        # Set CORS headers directly for this endpoint to ensure they're properly applied
+        response_headers = {
+            'Access-Control-Allow-Origin': request.headers.get('Origin', 'https://calgentic.com'),
+            'Access-Control-Allow-Credentials': 'true',
+            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type'
+        }
+        
         response = main.promptToEvent(prompt)
         
         if isinstance(response, dict) and 'error' in response:
             logger.error(f"Error in prompt processing: {response['error']}")
-            return jsonify(response), 400
+            return jsonify(response), 400, response_headers
             
         response_dict = response
         if 'action_type' not in response_dict:
             logger.error("Missing action_type in response")
-            return jsonify({"error": "Invalid response format from AI service"}), 400
+            return jsonify({"error": "Invalid response format from AI service"}), 400, response_headers
 
         if response_dict['action_type'] == 'create':
             if 'eventParams' not in response_dict or 'eventCompletion' not in response_dict:
                 logger.error("Missing eventParams or eventCompletion in create action")
-                return jsonify({"error": "Invalid event creation parameters"}), 400
+                return jsonify({"error": "Invalid event creation parameters"}), 400, response_headers
             eventParams = response_dict['eventParams']
             if isinstance(eventParams, list) and len(eventParams) > 0:
                 event_data = eventParams[0]
                 try:
                     if main.formatEvent(event_data):
                         message = response_dict['eventCompletion']
-                        return jsonify({"message": message, "success": True})
+                        return jsonify({"message": message, "success": True}), 200, response_headers
                     else:
                         logger.error("Failed to format event")
-                        return jsonify({"error": "Failed to format event data"}), 400
+                        return jsonify({"error": "Failed to format event data"}), 400, response_headers
                 except Exception as e:
                     logger.error(f"Exception in formatEvent: {str(e)}")
-                    return jsonify({"error": f"Error processing event: {str(e)}"}), 400
+                    return jsonify({"error": f"Error processing event: {str(e)}"}), 400, response_headers
             else:
                 logger.error("eventParams is not in the expected format")
-                return jsonify({"error": "Invalid event parameters format"}), 400
+                return jsonify({"error": "Invalid event parameters format"}), 400, response_headers
         elif response_dict['action_type'] == 'view':
             if 'query_details' not in response_dict:
                 logger.error("Missing query_details in view action")
-                return jsonify({"error": "Missing event query parameters"}), 400
+                return jsonify({"error": "Missing event query parameters"}), 400, response_headers
             query_details = response_dict['query_details']
             try:
-                return jsonify(main.findEvent(query_details=query_details))
+                return jsonify(main.findEvent(query_details=query_details)), 200, response_headers
             except Exception as e:
                 logger.error(f"Error in findEvent: {str(e)}")
-                return jsonify({"error": f"Error finding events: {str(e)}"}), 400
+                return jsonify({"error": f"Error finding events: {str(e)}"}), 400, response_headers
         else:
             logger.error(f"Unknown action_type: {response_dict['action_type']}")
-            return jsonify({"error": "Unsupported action type"}), 400
+            return jsonify({"error": "Unsupported action type"}), 400, response_headers
     except Exception as e:
         logger.error(f"Unexpected error in prompt endpoint: {str(e)}")
-        return jsonify({"error": "An unexpected error occurred. Please try again."}), 500
+        return jsonify({"error": "An unexpected error occurred. Please try again."}), 500, response_headers
 
 @app.route('/api/login')
 def login():
@@ -358,8 +386,19 @@ def after_request(response):
         "http://127.0.0.1:5001",
         "https://calgentic.com",
         "https://www.calgentic.com",
-        "https://calgentic.onrender.com"
+        "https://calgentic.onrender.com",
+        "https://api.calgentic.com"
     ]
+    
+    # Handle preflight OPTIONS requests
+    if request.method == 'OPTIONS':
+        response.headers.add('Access-Control-Allow-Origin', origin if origin in allowed_origins else allowed_origins[0])
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With')
+        response.headers.add('Access-Control-Allow-Methods', 'GET, PUT, POST, DELETE, OPTIONS')
+        response.headers.add('Access-Control-Allow-Credentials', 'true')
+        response.headers.add('Access-Control-Max-Age', '3600')
+        return response
+        
     if origin in allowed_origins:
         response.headers.add('Access-Control-Allow-Origin', origin)
     else:
