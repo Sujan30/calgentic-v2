@@ -212,7 +212,7 @@ def askPrompt():
 
 def promptToEvent(prompt):
     
-    client = OpenAI(api_key=os.getenv('openai_key'))
+    client = OpenAI(api_key=os.getenv('openai_key2'))
     
     # Get current date and timezone for reference
     local_tz = datetime.datetime.now().astimezone().tzinfo
