@@ -229,7 +229,7 @@ def auth_callback():
         code = request.args.get('code')
         if not code:
             logger.error("No code in request")
-            return redirect(f"{frontend_url}?auth_error=no_code")
+            return redirect(f"{frontend_url}/dashboard?auth_error=no_code")
 
         token_url = "https://oauth2.googleapis.com/token"
         client_id = os.getenv('google_client_id')
@@ -252,7 +252,7 @@ def auth_callback():
         token_response = requests.post(token_url, data=token_data)
         if not token_response.ok:
             logger.error(f"Token exchange failed: {token_response.status_code} - {token_response.text}")
-            return redirect(f"{frontend_url}?auth_error=token_exchange_failed")
+            return redirect(f"{frontend_url}/dashboard?auth_error=token_exchange_failed")
 
         tokens = token_response.json()
         logger.info("Received tokens: %s", {k: v if k not in ['id_token', 'access_token'] else v[:10] + '...' for k, v in tokens.items()})
@@ -260,7 +260,7 @@ def auth_callback():
         id_token = tokens.get('id_token')
         if not id_token:
             logger.error("No ID token received")
-            return redirect(f"{frontend_url}?auth_error=no_id_token")
+            return redirect(f"{frontend_url}/dashboard?auth_error=no_id_token")
 
         # Decode the ID token without verifying signature
         user_data = jwt.decode(id_token, options={"verify_signature": False})
@@ -284,14 +284,14 @@ def auth_callback():
         }
 
         user_email = user_data.get('email', '')
-        # Redirect to the frontend home page with auth_success flag
-        redirect_target = f"{frontend_url}?auth_success=true&user={user_email}"
+        # Redirect to the frontend dashboard with auth_success flag
+        redirect_target = f"{frontend_url}/dashboard?auth_success=true&user={user_email}"
         logger.info(f"Authentication successful, redirecting to: {redirect_target}")
         return redirect(redirect_target)
 
     except Exception as e:
         logger.error(f"Error in callback: {str(e)}")
-        return redirect(f"{frontend_url}?auth_error=exception")
+        return redirect(f"{frontend_url}/dashboard?auth_error=exception")
 
 @app.route("/auth/user")
 def get_user():

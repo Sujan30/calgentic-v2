@@ -49,7 +49,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         };
         setUser(basicUser);
         setIsAuthenticated(true);
-        window.history.replaceState({}, document.title, window.location.pathname);
+        // Clear URL parameters but keep the dashboard path
+        window.history.replaceState({}, document.title, '/dashboard');
         return true;
       }
 
@@ -64,6 +65,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (data.authenticated) {
           setUser(data.user);
           setIsAuthenticated(true);
+          // If we're not on the dashboard, redirect there
+          if (!window.location.pathname.includes('/dashboard')) {
+            window.location.href = '/dashboard';
+          }
           return true;
         } else {
           setUser(null);
