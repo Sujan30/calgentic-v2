@@ -40,61 +40,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const urlParams = new URLSearchParams(window.location.search);
       const authSuccess = urlParams.get('auth_success');
       const userEmail = urlParams.get('user');
-      const code = urlParams.get('code'); // <-- NEW: Get the 'code' parameter
 
-      // --- NEW LOGIC: Handle Google OAuth Callback with 'code' ---
-      if (code) {
-        console.log("Frontend received OAuth code. Sending to backend for token exchange...");
-        setIsLoading(true); // Show loading state while processing
-
-        try {
-          const response = await fetch(`${SERVER_BASE_URL}/auth/callback`, { // <-- Adjust this backend endpoint if needed
-            method: "POST", // Use POST for security and sending data in body
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              code,
-              redirect_uri: FRONTEND_REDIRECT_URI, // Send the redirect_uri that was used
-            }),
-            credentials: "include", // Important for sending cookies (e.g., session ID)
-          });
-
-          if (response.ok) {
-            const data = await response.json();
-            if (data.authenticated) {
-              setUser(data.user);
-              setIsAuthenticated(true);
-              toast.success("Logged in successfully!");
-            } else {
-              toast.error("Authentication failed after backend processing.");
-              setUser(null);
-              setIsAuthenticated(false);
-            }
-          } else {
-            const errorText = await response.text();
-            console.error("Backend token exchange failed:", response.status, errorText);
-            toast.error(`Login failed: ${errorText || 'Server error'}`);
-            setUser(null);
-            setIsAuthenticated(false);
-          }
-        } catch (error) {
-          console.error("Network error during backend token exchange:", error);
-          toast.error("Network error during login.");
-          setUser(null);
-          setIsAuthenticated(false);
-        } finally {
-          // Clear the URL parameters but maintain the path
-          // This is done whether successful or not to prevent re-processing the code
-          window.history.replaceState({}, document.title, window.location.pathname);
-          setIsLoading(false);
-        }
-        return isAuthenticated; // Return current status, might need a re-check if user was set
-      }
-      // --- END NEW LOGIC ---
-
-      // Your existing logic for handling backend redirects with auth_success parameters
-      // This is for if your backend *redirects back to the frontend* with a status
       if (authSuccess === 'true' && userEmail) {
         const basicUser = {
           id: userEmail,
@@ -107,7 +53,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return true;
       }
 
-      // Only make the API call to check session if no specific OAuth parameters were found
+      // Check session status
       const response = await fetch(`${API_BASE_URL}/api/check-auth`, {
         method: "GET",
         credentials: "include",
@@ -149,15 +95,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const login = () => {
     const SCOPES = [
       "openid",
-      "https://www.googleapis.com/auth/calendar", // Consider if you need full calendar access or just .readonly or .events
+      "https://www.googleapis.com/auth/calendar",
       "https://www.googleapis.com/auth/userinfo.email",
       "https://www.googleapis.com/auth/userinfo.profile",
     ];
 
-    const googleLoginUrl = `https://accounts.google.com/o/oauth2/auth?client_id=${GOOGLE_CLIENT_ID}&redirect_uri=${encodeURIComponent(FRONTEND_REDIRECT_URI)}&response_type=code&scope=${encodeURIComponent(SCOPES.join(" "))}&access_type=offline&prompt=consent&include_granted_scopes=true`;
-
-    console.log("Redirecting to Google OAuth:", googleLoginUrl);
-    window.location.href = googleLoginUrl;
+    // Use the backend's login endpoint instead of direct Google OAuth
+    window.location.href = `${SERVER_BASE_URL}/api/login`;
   };
 
   // Logout function
