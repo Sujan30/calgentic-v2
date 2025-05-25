@@ -64,10 +64,10 @@ frontend_url = os.getenv('frontend_url', 'http://127.0.0.1:8080')
 redirect_url = os.getenv('redirect_url', f"{frontend_url}/auth/callback")
 
 logger.info(f"FRONTEND_URL set to: {frontend_url}")
+logger.info(f"REDIRECT_URL set to: {redirect_url}")
 
 if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
-    raise Exception("Google OAuth credentials not set. Check your .env file.")
-
+    raise Exception("Google OAuth credentials not set. Check your environment variables.")
 
 client_secret_file = os.getenv('credentials_path')
 if not os.path.exists(client_secret_file):
@@ -192,22 +192,28 @@ def login():
             'https://www.googleapis.com/auth/userinfo.email',
             'https://www.googleapis.com/auth/userinfo.profile'
         ]
-        client_secret_file = os.getenv('credentials_path')
-        logger.info(f"Using client secret file: {client_secret_file}")
-        if not os.path.exists(client_secret_file):
-            logger.error(f"Client secret file not found at: {client_secret_file}")
-            return jsonify({
-                'error': 'Authentication failed',
-                'message': f"Client secret file not found at: {client_secret_file}"
-            }), 500
-
-        flow = InstalledAppFlow.from_client_secrets_file(client_secret_file, scopes=SCOPES)
+        
+        # Create OAuth flow using environment variables
+        flow = InstalledAppFlow.from_client_config(
+            {
+                "web": {
+                    "client_id": GOOGLE_CLIENT_ID,
+                    "client_secret": GOOGLE_CLIENT_SECRET,
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                    "redirect_uris": [redirect_url]
+                }
+            },
+            scopes=SCOPES
+        )
+        
         flow.redirect_uri = redirect_url
         logger.info(f"Redirect URI set to: {flow.redirect_uri}")
 
         authorization_url, state = flow.authorization_url(
             access_type='offline',
-            include_granted_scopes='true'
+            include_granted_scopes='true',
+            prompt='consent'  # Force consent screen to ensure we get refresh token
         )
         session['state'] = state
         logger.info(f"Authorization URL: {authorization_url}")
