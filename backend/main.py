@@ -2,6 +2,7 @@ import os
 import flask
 import os.path
 import datetime
+import pytz  # Add this import at the top
 
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -28,36 +29,47 @@ calendarId = None
 
 
 def calendarAuth():
-    global creds
-    # The file token.json stores the user's access and refresh tokens, and is
-    # created automatically when the authorization flow completes for the first
-    # time.
-    
-    # Use absolute paths to the credentials and token files
-    credentials_path = "/Users/sujannandikolsunilkumar/ai calendar/credentials.json"
-    token_path = "/Users/sujannandikolsunilkumar/ai calendar/token.json"
-    
-    if os.path.exists(token_path):
+    global creds # Make sure 'creds' is accessible outside this function if needed
+
+    # Get tokens from session
+    session = flask.session
+    if not session or 'tokens' not in session:
+        print("No tokens found in session")
+        raise Exception("Authentication required. Please log in through the web interface.")
+
+    tokens = session['tokens']
+    if not tokens or 'access_token' not in tokens:
+        print("No access token found in session")
+        raise Exception("Authentication required. Please log in through the web interface.")
+
+    try:
+        # Create credentials from session tokens
+        creds = Credentials(
+            token=tokens['access_token'],
+            refresh_token=tokens.get('refresh_token'),
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=os.getenv('GOOGLE_CLIENT_ID'),
+            client_secret=os.getenv('GOOGLE_CLIENT_SECRET'),
+            scopes=SCOPES
+        )
+        print("Successfully created credentials from session tokens")
+    except Exception as e:
+        print(f"Error creating credentials from session tokens: {e}")
+        raise Exception("Failed to create credentials from session tokens")
+
+    # Check if token needs refresh
+    if creds.expired and creds.refresh_token:
         try:
-            creds = Credentials.from_authorized_user_file(token_path, SCOPES)
-        except Exception as e:
-            print(f'Error loading credentials: {e}. Deleting token.json and re-authenticating.')
-            os.remove(token_path)  # Delete the invalid token file
-            creds = None  # Reset creds to None to trigger re-authentication
-
-    # If there are no (valid) credentials available, let the user log in.
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                credentials_path, SCOPES
-            )
-            creds = flow.run_local_server(port=0)
-        # Save the credentials for the next run
-        with open(token_path, "w") as token:
-            token.write(creds.to_json())
+            # Update session with new tokens
+            session['tokens']['access_token'] = creds.token
+            session['tokens']['expires_at'] = creds.expiry.timestamp() if creds.expiry else None
+            print("Successfully refreshed tokens")
+        except Exception as e:
+            print(f"Error refreshing tokens: {e}")
+            raise Exception("Failed to refresh tokens")
 
+    return creds
 
 """
 
@@ -76,7 +88,7 @@ def deleteEvent(date, title, start, end, calendarId='primary'):
 
 
     
-def createEvent(summary, description, start, end, calendarId='primary'):
+def createEvent(summary, description, start, end=None, calendarId='primary'):
    try:
       global service
       global creds
@@ -90,7 +102,7 @@ def createEvent(summary, description, start, end, calendarId='primary'):
           service = build('calendar', 'v3', credentials=creds)
       
       # Validate inputs
-      if not summary or not description or not start or not end:
+      if not summary or not start:
           print("Missing required parameters for createEvent")
           return False
       
@@ -98,10 +110,32 @@ def createEvent(summary, description, start, end, calendarId='primary'):
       try:
           # Get the local timezone
           local_tz = datetime.datetime.now().astimezone().tzinfo
+          local_tz_name = str(local_tz)
           
-          # Parse the datetime strings
+          # Convert timezone name to IANA format if needed
+          if local_tz_name in ['PDT', 'PST']:
+              local_tz_name = 'America/Los_Angeles'
+          elif local_tz_name in ['EDT', 'EST']:
+              local_tz_name = 'America/New_York'
+          elif local_tz_name in ['CDT', 'CST']:
+              local_tz_name = 'America/Chicago'
+          elif local_tz_name in ['MDT', 'MST']:
+              local_tz_name = 'America/Denver'
+          elif local_tz_name in ['GMT', 'UTC']:
+              local_tz_name = 'UTC'
+          
+          print(f"Using timezone: {local_tz_name}")
+          
+          # Parse the start datetime
           start_dt = datetime.datetime.fromisoformat(start)
-          end_dt = datetime.datetime.fromisoformat(end)
+          
+          # If end is not provided or empty, set it to 1 hour after start
+          if not end or end == "":
+              end_dt = start_dt + datetime.timedelta(hours=1)
+              end = end_dt.isoformat()
+              print(f"Setting default end time to 1 hour after start: {end}")
+          else:
+              end_dt = datetime.datetime.fromisoformat(end)
           
           # Ensure end time is after start time
           if end_dt <= start_dt:
@@ -112,17 +146,17 @@ def createEvent(summary, description, start, end, calendarId='primary'):
           print(f"Invalid datetime format: {e}")
           return False
       
-      # Create the event object
+      # Create the event object with proper timezone format
       event = {
          'summary': summary,
-         'description': description,
+         'description': description or "",  # Ensure description is never None
          'start': {
             'dateTime': start,
-            'timeZone': str(local_tz),  # Use the local timezone
+            'timeZone': local_tz_name,  # Use the converted timezone name
          },
          'end': {
             'dateTime': end,
-            'timeZone': str(local_tz),  # Use the local timezone
+            'timeZone': local_tz_name,  # Use the converted timezone name
          }
       }
       
@@ -211,115 +245,125 @@ def askPrompt():
 
 
 def promptToEvent(prompt):
-    
-    client = OpenAI(api_key=os.getenv('openai_key2'))
-    
-    # Get current date and timezone for reference
-    local_tz = datetime.datetime.now().astimezone().tzinfo
-    current_date = datetime.datetime.now().astimezone()
-    
-    # Get the timezone offset as a string (e.g., "-07:00")
-    tz_offset = current_date.strftime('%z')
-    # Format it with a colon (e.g., "-07:00")
-    if len(tz_offset) == 5:
-        tz_offset = f"{tz_offset[:3]}:{tz_offset[3:]}"
-    
-    print(f"Local timezone offset: {tz_offset}")
-    
-    modified_prompt = f"""
-    You are a calendar assistant. Given the user's input, determine if they want to create a new event or view existing events.
-    
-    Today's date is {current_date.strftime('%Y-%m-%d')} and the current time is {current_date.strftime('%H:%M:%S')} in timezone {tz_offset}.
-    
-    When interpreting dates and times:
-    - For relative dates like "tomorrow", "next week", etc., calculate the actual date based on today's date.
-    - Always use the current year ({current_date.year}) for dates unless a specific year is mentioned.
-    - Never schedule events in the past.
-    - When a user specifies a time (like 9 AM), use that EXACT time. Do not adjust for any timezone differences.
-    - Use the user's local timezone offset of {tz_offset} in the output.
-    
-    - If they want to create an event, return the following JSON structure:
-    - factor in the timezone offset in the output, including daylight savings time, so if a user says 6 pm before DST, it should still schedule it for 6pm not for 7pm
-      
-      {{
-        "action_type": "create",
-        "eventParams": [
-          {{
-            "summary": "Event title",
-            "description": "Event details",
-            "start": "YYYY-MM-DDTHH:MM:SS{tz_offset}",
-            "end": "YYYY-MM-DDTHH:MM:SS{tz_offset}",
-            "calendarId": "primary"
-          }}
-        ],
-        "eventCompletion" : "A little summary about the event, that acts as a confirmation"
-      }}
-      
-    
-    - If they want to view an event, return:
-        - At least one of the following fields must be included: `date`, `title`, `start`, `end`, `calendarId`.
-      {{
-        "action_type": "view",
-        "query_details": {{
-            "date" : "date of the event they want to view",
-            "title" : "title of the event they want to view",
-            "start": "YYYY-MM-DDTHH:MM:SS{tz_offset}",
-            "end": "YYYY-MM-DDTHH:MM:SS{tz_offset}",
-            "calendarId": "primary"
-        }}
-      }}
-      - If they want to delete an event
-        - atleast one of the following fields must be included: `date`, `title`, `start`, `end`
-        - if calendarID is provided, then change the calendarID to the one provided, else assume it is primary
-        -if only calendarID is provided, then don't do anything. 
-        return the following JSON structure:
-      {{
-        "action_type": "delete",
-        "query_details": {{
-            "date" : "date of the event they want to view",
-            "title" : "title of the event they want to view",
-            "start": "YYYY-MM-DDTHH:MM:SS{tz_offset}",
-            "end": "YYYY-MM-DDTHH:MM:SS{tz_offset}",
-            "calendarId": "primary"
-        }}
-      }}
-    
-    Ensure the response is **valid JSON format**. Do not include markdown formatting like ```json at the beginning or ``` at the end. Just return the raw JSON.
-    
-    IMPORTANT: When the user specifies a time like "9 AM", make sure to use exactly 09:00:00 in the output, not 08:00:00 or any other time. Do not adjust the time in any way.
-    
-    User input: {prompt}
-    """
-    response = client.chat.completions.create(
-        model="gpt-4",
-        messages=[{"role": "user", "content": modified_prompt}]
-    )
-    
-    if not response or not response.choices or not response.choices[0]:
-        print("Invalid response from OpenAI API")
-        return {
-            "error": "Invalid response from AI service",
-            "message": "The AI service returned an invalid response. Please try again."
-        }
-    
-    content = response.choices[0].message.content
-    print(f"data from chatgpt {content}")
-    
-    # Strip markdown code block formatting if present
-    if "```" in content:
-        # Remove all occurrences of ```json or ``` from the content
-        content = content.replace("```json", "").replace("```", "").strip()
-    
-    # Add error handling for JSON parsing
     try:
-        return json.loads(content)
-    except json.JSONDecodeError as e:
-        print(f"JSON parsing error: {e}")
-        print(f"Raw response after stripping: {content}")
-        # Return a structured error response
+        # Initialize OpenAI client with minimal configuration
+        client = OpenAI(
+            api_key=os.getenv('openai_key_v3'),
+            base_url="https://api.openai.com/v1"  # Explicitly set the base URL
+        )
+        
+        # Get current date and timezone for reference
+        local_tz = datetime.datetime.now().astimezone().tzinfo
+        current_date = datetime.datetime.now().astimezone()
+        
+        # Get the timezone offset as a string (e.g., "-07:00")
+        tz_offset = current_date.strftime('%z')
+        # Format it with a colon (e.g., "-07:00")
+        if len(tz_offset) == 5:
+            tz_offset = f"{tz_offset[:3]}:{tz_offset[3:]}"
+        
+        print(f"Local timezone offset: {tz_offset}")
+        
+        modified_prompt = f"""
+        You are a calendar assistant. Given the user's input, determine if they want to create a new event or view existing events.
+        
+        Today's date is {current_date.strftime('%Y-%m-%d')} and the current time is {current_date.strftime('%H:%M:%S')} in timezone {tz_offset}.
+        
+        When interpreting dates and times:
+        - For relative dates like "tomorrow", "next week", etc., calculate the actual date based on today's date.
+        - Always use the current year ({current_date.year}) for dates unless a specific year is mentioned.
+        - Never schedule events in the past.
+        - When a user specifies a time (like 9 AM), use that EXACT time. Do not adjust for any timezone differences.
+        - Use the user's local timezone offset of {tz_offset} in the output.
+        
+        - If they want to create an event, return the following JSON structure:
+        - factor in the timezone offset in the output, including daylight savings time, so if a user says 6 pm before DST, it should still schedule it for 6pm not for 7pm
+          
+          {{
+            "action_type": "create",
+            "eventParams": [
+              {{
+                "summary": "Event title",
+                "description": "Event details",
+                "start": "YYYY-MM-DDTHH:MM:SS{tz_offset}",
+                "end": "YYYY-MM-DDTHH:MM:SS{tz_offset}",
+                "calendarId": "primary"
+              }}
+            ],
+            "eventCompletion" : "A little summary about the event, that acts as a confirmation"
+          }}
+          
+        
+        - If they want to view an event, return:
+            - At least one of the following fields must be included: `date`, `title`, `start`, `end`, `calendarId`.
+          {{
+            "action_type": "view",
+            "query_details": {{
+                "date" : "date of the event they want to view",
+                "title" : "title of the event they want to view",
+                "start": "YYYY-MM-DDTHH:MM:SS{tz_offset}",
+                "end": "YYYY-MM-DDTHH:MM:SS{tz_offset}",
+                "calendarId": "primary"
+            }}
+          }}
+          - If they want to delete an event
+            - atleast one of the following fields must be included: `date`, `title`, `start`, `end`
+            - if calendarID is provided, then change the calendarID to the one provided, else assume it is primary
+            -if only calendarID is provided, then don't do anything. 
+            return the following JSON structure:
+          {{
+            "action_type": "delete",
+            "query_details": {{
+                "date" : "date of the event they want to view",
+                "title" : "title of the event they want to view",
+                "start": "YYYY-MM-DDTHH:MM:SS{tz_offset}",
+                "end": "YYYY-MM-DDTHH:MM:SS{tz_offset}",
+                "calendarId": "primary"
+            }}
+          }}
+        
+        Ensure the response is **valid JSON format**. Do not include markdown formatting like ```json at the beginning or ``` at the end. Just return the raw JSON.
+        
+        IMPORTANT: When the user specifies a time like "9 AM", make sure to use exactly 09:00:00 in the output, not 08:00:00 or any other time. Do not adjust the time in any way.
+        
+        User input: {prompt}
+        """
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": modified_prompt}]
+        )
+        
+        if not response or not response.choices or not response.choices[0]:
+            print("Invalid response from OpenAI API")
+            return {
+                "error": "Invalid response from AI service",
+                "message": "The AI service returned an invalid response. Please try again."
+            }
+        
+        content = response.choices[0].message.content
+        print(f"data from chatgpt {content}")
+        
+        # Strip markdown code block formatting if present
+        if "```" in content:
+            # Remove all occurrences of ```json or ``` from the content
+            content = content.replace("```json", "").replace("```", "").strip()
+        
+        # Add error handling for JSON parsing
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError as e:
+            print(f"JSON parsing error: {e}")
+            print(f"Raw response after stripping: {content}")
+            # Return a structured error response
+            return {
+                "error": "Invalid JSON response from ChatGPT",
+                "raw_response": content
+            }
+    except Exception as e:
+        print(f"Error in promptToEvent: {str(e)}")
         return {
-            "error": "Invalid JSON response from ChatGPT",
-            "raw_response": content
+            "error": "Error processing prompt",
+            "message": "An error occurred while processing the prompt"
         }
 
 def formatEvent(event):

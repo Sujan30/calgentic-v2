@@ -31,15 +31,27 @@ app.config['SESSION_COOKIE_PATH'] = '/'
 app.config['SESSION_COOKIE_NAME'] = 'calgentic_session'
 
 # Enable CORS for allowed origins
-CORS(app, supports_credentials=True, resources={r"/*": {"origins": [
-    "http://localhost:8080",
-    "http://127.0.0.1:8080",
-    "http://localhost:5001",
-    "http://127.0.0.1:5001",
-    "https://calgentic.com",
-    "https://www.calgentic.com",
-    "https://calgentic.onrender.com",
-]}})
+CORS(app, 
+     supports_credentials=True, 
+     resources={r"/*": {
+         "origins": [
+             "http://localhost:8080",
+             "http://127.0.0.1:8080",
+             "http://localhost:5001",
+             "http://127.0.0.1:5001",
+             "https://calgentic.com",
+             "https://www.calgentic.com",
+             "https://calgentic.onrender.com",
+         ],
+         "methods": ["GET", "POST", "OPTIONS"],
+         "allow_headers": ["Content-Type", "Authorization", "Accept"],
+         "expose_headers": ["Content-Type", "Authorization"],
+         "max_age": 3600,
+         "send_wildcard": False,
+         "vary_header": True,
+         "supports_credentials": True
+     }}
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -48,7 +60,7 @@ logger = logging.getLogger(__name__)
 # Load Google OAuth credentials from environment variables
 GOOGLE_CLIENT_ID = os.getenv("google_client_id")
 GOOGLE_CLIENT_SECRET = os.getenv("google_client_secret")
-frontend_url = os.getenv('frontend_url', 'http://127.0.0.1:5000')
+frontend_url = os.getenv('frontend_url', 'http://127.0.0.1:8080')
 redirect_url = os.getenv('redirect_url', f"{frontend_url}/auth/callback")
 
 logger.info(f"FRONTEND_URL set to: {frontend_url}")
@@ -56,47 +68,34 @@ logger.info(f"FRONTEND_URL set to: {frontend_url}")
 if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
     raise Exception("Google OAuth credentials not set. Check your .env file.")
 
-# Create credentials.json if it doesn't exist
-client_secret_file = os.getenv('google_client_id_path', 'credentials.json')
+
+client_secret_file = os.getenv('credentials_path')
 if not os.path.exists(client_secret_file):
-    try:
-        credentials_data = {
-            "installed": {
-                "client_id": GOOGLE_CLIENT_ID,
-                "project_id": "gen-lang-client-0051339096",
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-                "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                "client_secret": GOOGLE_CLIENT_SECRET,
-                "redirect_uris": [
-                    "http://localhost",
-                    "https://calgentic.com",
-                    "https://www.calgentic.com"
-                ]
-            }
-        }
-        with open(client_secret_file, 'w') as f:
-            json.dump(credentials_data, f)
-        logger.info(f"Created credentials file at: {client_secret_file}")
-    except Exception as e:
-        logger.error(f"Failed to create credentials file: {str(e)}")
+    raise FileNotFoundError(f"Credentials file not found at: {client_secret_file}")
 
 @app.before_request
 def log_request_info():
     # Debug logging only; sensitive details should not be logged in production.
-    logger.debug('Headers: %s', request.headers)
-    logger.debug('Body: %s', request.get_data())
-    logger.debug('Session: %s', session)
-    logger.debug('Cookies: %s', request.cookies)
+    logger.info('Request Method: %s', request.method)
+    logger.info('Request URL: %s', request.url)
+    logger.info('Request Headers: %s', dict(request.headers))
+    logger.info('Request Body: %s', request.get_data())
+    logger.info('Session: %s', session)
+    logger.info('Cookies: %s', request.cookies)
+    logger.info('Origin: %s', request.headers.get('Origin'))
+    logger.info('Host: %s', request.headers.get('Host'))
 
 @app.route('/')
 def index():
     return send_from_directory(app.static_folder, 'index.html')
 
-@app.route('/prompt/<prompt>', methods=['GET', 'OPTIONS'])
-def onboard(prompt):
+@app.route('/prompt', methods=['POST', 'OPTIONS'])
+def onboard():
+    logger.info('Received request to /prompt endpoint')
+    
     # Handle OPTIONS preflight request
     if request.method == 'OPTIONS':
+        logger.info('Handling OPTIONS request')
         response = app.make_default_options_response()
         origin = request.headers.get('Origin', '')
         allowed_origins = [
@@ -109,20 +108,31 @@ def onboard(prompt):
             "https://calgentic.onrender.com",
         ]
         response.headers['Access-Control-Allow-Origin'] = origin if origin in allowed_origins else allowed_origins[0]
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
-        response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept'
+        response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
         response.headers['Access-Control-Allow-Credentials'] = 'true'
         response.headers['Access-Control-Max-Age'] = '3600'
         return response
     
     try:
-        logger.info(f"Processing prompt: {prompt}")
-        # Set CORS headers directly for this endpoint to ensure they're properly applied
+        # Get prompt from request body
+        data = request.get_json()
+        logger.info('Received JSON data: %s', data)
+        
+        if not data or 'prompt' not in data:
+            logger.error('No prompt provided in request body')
+            return jsonify({"error": "No prompt provided in request body"}), 400
+            
+        prompt = data['prompt']
+        logger.info('Processing prompt: %s', prompt)
+        
+        # Set CORS headers directly for this endpoint
         response_headers = {
             'Access-Control-Allow-Origin': request.headers.get('Origin', 'https://calgentic.com'),
             'Access-Control-Allow-Credentials': 'true',
-            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-            'Access-Control-Allow-Headers': 'Content-Type'
+            'Access-Control-Allow-Methods': 'POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization, Accept',
+            'Access-Control-Expose-Headers': 'Content-Type, Authorization'
         }
         
         response = main.promptToEvent(prompt)
@@ -182,7 +192,7 @@ def login():
             'https://www.googleapis.com/auth/userinfo.email',
             'https://www.googleapis.com/auth/userinfo.profile'
         ]
-        client_secret_file = os.getenv('google_client_id_path')
+        client_secret_file = os.getenv('credentials_path')
         logger.info(f"Using client secret file: {client_secret_file}")
         if not os.path.exists(client_secret_file):
             logger.error(f"Client secret file not found at: {client_secret_file}")
@@ -387,30 +397,22 @@ def after_request(response):
         "https://calgentic.com",
         "https://www.calgentic.com",
         "https://calgentic.onrender.com",
-        "https://api.calgentic.com"
     ]
     
-    # Handle preflight OPTIONS requests
-    if request.method == 'OPTIONS':
-        response.headers.add('Access-Control-Allow-Origin', origin if origin in allowed_origins else allowed_origins[0])
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With')
-        response.headers.add('Access-Control-Allow-Methods', 'GET, PUT, POST, DELETE, OPTIONS')
-        response.headers.add('Access-Control-Allow-Credentials', 'true')
-        response.headers.add('Access-Control-Max-Age', '3600')
-        return response
-        
+    # Log response details
+    logger.info('Response Status: %s', response.status)
+    logger.info('Response Headers: %s', dict(response.headers))
+    
     if origin in allowed_origins:
-        response.headers.add('Access-Control-Allow-Origin', origin)
+        response.headers['Access-Control-Allow-Origin'] = origin
     else:
-        response.headers.add('Access-Control-Allow-Origin', allowed_origins[0])
+        response.headers['Access-Control-Allow-Origin'] = allowed_origins[0]
 
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With')
-    response.headers.add('Access-Control-Allow-Methods', 'GET, PUT, POST, DELETE, OPTIONS')
-    response.headers.add('Access-Control-Allow-Credentials', 'true')
-    response.headers.add('Access-Control-Expose-Headers', 'Content-Type, X-Auth-Token')
-    response.headers.add('Vary', 'Origin, Access-Control-Request-Headers, Access-Control-Request-Method')
-    if response.mimetype == 'application/json' and 'Content-Type' not in response.headers:
-        response.headers.add('Content-Type', 'application/json')
+    response.headers['Access-Control-Allow-Credentials'] = 'true'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept'
+    response.headers['Access-Control-Expose-Headers'] = 'Content-Type, Authorization'
+    
     return response
 
 def generate_new_token(refresh_token):

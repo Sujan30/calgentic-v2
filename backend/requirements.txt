@@ -1,10 +1,29 @@
-flask
-flask-cors
-google-auth-oauthlib
-google-auth
-python-dotenv
-requests
-pyjwt
-gunicorn
-google-api-python-client
-openai
+# Web Framework
+Flask==3.0.2
+flask-cors==4.0.0
+
+# Google API
+google-auth-oauthlib==1.2.0
+google-auth-httplib2==0.2.0
+google-api-python-client==2.118.0
+
+# OpenAI
+openai==1.82.0
+
+# Environment and Configuration
+python-dotenv==1.0.1
+
+# Date/Time Handling
+pytz==2024.1
+
+# JWT
+PyJWT==2.8.0
+
+# HTTP Client
+requests==2.31.0
+
+# Session Management
+Flask-Session==0.7.0
+
+# WSGI Server (for production)
+gunicorn==21.2.0
