@@ -48,7 +48,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         setIsLoading(true); // Show loading state while processing
 
         try {
-          const response = await fetch(`${SERVER_BASE_URL}/auth/google/callback`, { // <-- Adjust this backend endpoint if needed
+          const response = await fetch(`${SERVER_BASE_URL}/auth/callback`, { // <-- Adjust this backend endpoint if needed
             method: "POST", // Use POST for security and sending data in body
             headers: {
               "Content-Type": "application/json",
