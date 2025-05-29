@@ -25,8 +25,8 @@ app.config['SESSION_PERMANENT'] = True
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=5)
 app.config['SESSION_COOKIE_SECURE'] = True
 app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
-app.config['SESSION_COOKIE_DOMAIN'] = None
+app.config['SESSION_COOKIE_SAMESITE'] = 'None'
+app.config['SESSION_COOKIE_DOMAIN'] = '.calgentic.com'
 app.config['SESSION_COOKIE_PATH'] = '/'
 app.config['SESSION_COOKIE_NAME'] = 'calgentic_session'
 
@@ -419,12 +419,14 @@ def after_request(response):
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept'
     response.headers['Access-Control-Expose-Headers'] = 'Content-Type, Authorization'
     
-    # Ensure cookies are set with the correct attributes
+    # Ensure cookies are set with the correct attributes for cross-domain
     if 'Set-Cookie' in response.headers:
         cookies = response.headers.getlist('Set-Cookie')
         for cookie in cookies:
-            if 'SameSite=None' in cookie:
-                cookie = cookie.replace('SameSite=None', 'SameSite=Lax')
+            if 'SameSite=None' not in cookie:
+                cookie = cookie.replace('SameSite=Lax', 'SameSite=None')
+            if 'Secure' not in cookie:
+                cookie += '; Secure'
             response.headers.add('Set-Cookie', cookie)
     
     return response
