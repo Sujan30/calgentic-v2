@@ -86,7 +86,9 @@ def log_request_info():
     logger.info('Host: %s', request.headers.get('Host'))
 
 @app.route('/')
-def index():
+def root():
+    if os.environ.get('FLASK_ENV') == 'production':
+        return send_from_directory('frontend/dist', 'index.html')
     return redirect(frontend_url)
 
 @app.route('/prompt', methods=['POST', 'OPTIONS'])
@@ -480,7 +482,11 @@ def catch_all(path):
     if path.startswith('api/'):
         return jsonify({"error": "Not found"}), 404
     
-    # Redirect all other routes to the frontend
+    # In production, serve the React app's index.html
+    if os.environ.get('FLASK_ENV') == 'production':
+        return send_from_directory('frontend/dist', 'index.html')
+    
+    # In development, redirect to the frontend dev server
     return redirect(f"{frontend_url}/{path}")
 
 if __name__ == '__main__':
