@@ -98,23 +98,21 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   // Google OAuth login function
   const login = () => {
-    const SCOPES = [
-      "openid",
-      "https://www.googleapis.com/auth/calendar",
-      "https://www.googleapis.com/auth/userinfo.email",
-      "https://www.googleapis.com/auth/userinfo.profile",
-    ];
-
-    // Use the backend's login endpoint instead of direct Google OAuth
+    console.log("Initiating login with server URL:", SERVER_BASE_URL);
     window.location.href = `${SERVER_BASE_URL}/api/login`;
   };
 
   // Logout function
   const logout = async () => {
     try {
+      console.log("Initiating logout with server URL:", SERVER_BASE_URL);
       const response = await fetch(`${SERVER_BASE_URL}/auth/logout`, {
         method: "GET",
         credentials: "include",
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
       });
 
       if (response.ok) {

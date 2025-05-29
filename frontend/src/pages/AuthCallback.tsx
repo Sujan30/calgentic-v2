@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
 
 const AuthCallback = () => {
   const { isAuthenticated, checkAuth } = useAuth();
