@@ -14,7 +14,7 @@ import jwt
 # Load environment variables from .env file
 load_dotenv()
 
-app = Flask(__name__, static_folder='static', static_url_path='')
+app = Flask(__name__)
 
 # Use a strong secret key; load from environment in production
 app.secret_key = os.environ.get("SECRET_KEY") or os.urandom(24)
@@ -87,7 +87,7 @@ def log_request_info():
 
 @app.route('/')
 def index():
-    return send_from_directory(app.static_folder, 'index.html')
+    return redirect(frontend_url)
 
 @app.route('/prompt', methods=['POST', 'OPTIONS'])
 def onboard():
@@ -475,12 +475,13 @@ def test_cookie():
     return resp
 
 @app.route('/<path:path>')
-def serve_static(path):
+def catch_all(path):
+    # Don't handle API routes here
     if path.startswith('api/'):
         return jsonify({"error": "Not found"}), 404
-    if os.path.exists(os.path.join(app.static_folder, path)):
-        return send_from_directory(app.static_folder, path)
-    return send_from_directory(app.static_folder, 'index.html')
+    
+    # Redirect all other routes to the frontend
+    return redirect(f"{frontend_url}/{path}")
 
 if __name__ == '__main__':
     # In production, use a proper WSGI server (e.g., Gunicorn or uWSGI)
