@@ -2,106 +2,73 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Loader2 } from 'lucide-react';
+import { toast } from 'sonner'; // Assuming you use sonner for toasts
 
 const AuthCallback = () => {
-  const { isAuthenticated, checkAuth } = useAuth();
+  const { isAuthenticated, checkAuth, isLoading: authContextLoading } = useAuth();
   const [isVerifying, setIsVerifying] = useState(true);
   const [verificationAttempts, setVerificationAttempts] = useState(0);
   const navigate = useNavigate();
   const location = useLocation();
 
   useEffect(() => {
-    const verifyAuth = async () => {
-      // Parse URL parameters
+    const handleAuthRedirect = async () => {
+      // Parse URL parameters for potential errors from the backend
       const searchParams = new URLSearchParams(location.search);
-      const error = searchParams.get('error');
-      const code = searchParams.get('code');
-      const authSuccess = searchParams.get('auth_success');
-      
-      console.log('AuthCallback: URL parameters', { error, code, authSuccess });
-      
-      // Handle error case
-      if (error) {
-        setIsVerifying(false);
-        navigate('/login', { state: { error: 'Authentication failed. Please try again.' } });
-        return;
-      }
+      const authError = searchParams.get('auth_error'); // This is what your backend sends now
 
-      // If we have an auth_success parameter, we can navigate directly
-      if (authSuccess === 'true') {
-        await checkAuth();
+      if (authError) {
         setIsVerifying(false);
-        navigate('/dashboard');
-        return;
-      }
-
-      // If we have a code but no auth_success yet, we need to verify authentication
-      if (code) {
-        try {
-          console.log('AuthCallback: Verifying with code');
-          // Check authentication status
-          await checkAuth();
-          
-          console.log('AuthCallback: Auth check complete, isAuthenticated:', isAuthenticated);
-          
-          // If authenticated, navigate to dashboard
-          if (isAuthenticated) {
-            setIsVerifying(false);
-            navigate('/dashboard');
-            return;
-          }
-          
-          // If not authenticated yet but we still have attempts left
-          if (verificationAttempts < 5) {
-            console.log(`AuthCallback: Not authenticated yet, attempt ${verificationAttempts + 1} of 5`);
-            // Increment attempts and try again after a delay
-            setVerificationAttempts(prev => prev + 1);
-            setTimeout(verifyAuth, 1000 * verificationAttempts); // Increasing delay with each attempt
-          } else {
-            // If we've tried enough times and still not authenticated
-            console.log('AuthCallback: Authentication timed out after 5 attempts');
-            setIsVerifying(false);
-            navigate('/login', { state: { error: 'Authentication timed out. Please try again.' } });
-          }
-        } catch (error) {
-          console.error('AuthCallback: Error during verification', error);
-          setIsVerifying(false);
-          navigate('/login', { state: { error: 'Authentication failed. Please try again.' } });
+        // Display a user-friendly error message
+        let errorMessage = 'Authentication failed. Please try again.';
+        if (authError === 'no_code') {
+          errorMessage = 'Authentication was interrupted. Please try again.';
+        } else if (authError === 'token_exchange_failed') {
+          errorMessage = 'Failed to secure your session. Please try again.';
+        } else if (authError === 'no_id_token') {
+          errorMessage = 'Could not retrieve user information. Please try again.';
         }
-      } else {
-        // If no code or auth_success, redirect to login
-        console.log('AuthCallback: No code or auth_success parameter');
-        setIsVerifying(false);
-        navigate('/login', { state: { error: 'Invalid authentication callback. Please try again.' } });
+        toast.error(errorMessage);
+        navigate('/login', { replace: true }); // Redirect to login, replacing history
+        return;
       }
+
+      // If no error, we proceed to check the authentication status
+      // This will rely on the session cookie set by the backend
+      const authenticated = await checkAuth();
+      
+      if (authenticated) {
+        toast.success("Successfully logged in!");
+        navigate('/dashboard', { replace: true }); // Redirect to dashboard, replacing history
+      } else {
+        // This might happen if the session wasn't properly set, or checkAuth failed
+        toast.error("Failed to authenticate. Please log in again.");
+        navigate('/login', { replace: true }); // Redirect to login, replacing history
+      }
+
+      setIsVerifying(false);
     };
 
-    verifyAuth();
-  }, [checkAuth, isAuthenticated, location.search, navigate, verificationAttempts]);
+    // Trigger the authentication handling when the component mounts or URL changes
+    handleAuthRedirect();
+  }, [checkAuth, navigate, location.search]); // Depend on checkAuth, navigate, and location.search
+
+  // We can simplify the loading state as checkAuth handles its own loading.
+  // The local `isVerifying` state primarily indicates if the AuthCallback's logic has completed.
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-white dark:bg-black">
-      {isVerifying ? (
-        <div className="text-center">
-          <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto" />
-          <h1 className="mt-6 text-2xl font-bold text-gray-900 dark:text-white">Verifying your authentication...</h1>
-          <p className="mt-2 text-gray-600 dark:text-gray-300">
-            Please wait while we complete the login process.
-          </p>
-          {verificationAttempts > 0 && (
-            <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
-              Attempt {verificationAttempts} of 5...
-            </p>
-          )}
-        </div>
-      ) : (
-        <div className="text-center">
-          <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto" />
-          <h1 className="mt-6 text-2xl font-bold text-gray-900 dark:text-white">Redirecting...</h1>
-        </div>
-      )}
+      <div className="text-center">
+        <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto" />
+        <h1 className="mt-6 text-2xl font-bold text-gray-900 dark:text-white">
+          {isVerifying ? "Finalizing your login..." : "Redirecting..."}
+        </h1>
+        <p className="mt-2 text-gray-600 dark:text-gray-300">
+          Please wait while we secure your session.
+        </p>
+      </div>
     </div>
   );
 };
 
-export default AuthCallback; 
+export default AuthCallback;

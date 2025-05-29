@@ -34,7 +34,7 @@ const CommandBar = ({
           value={value}
           onChange={(e) => setValue(e.target.value)}
           placeholder={isLoading ? "Processing..." : placeholder}
-          className="w-full py-4 pl-12 pr-4 bg-transparent border-none focus:outline-none focus:ring-0 text-gray-800 placeholder-gray-400"
+          className="w-full py-4 pl-12 pr-4 bg-transparent border-none focus:outline-none focus:ring-0 text-gray-800 placeholder-gray-400 **z-10 relative**" // ADDED z-10 AND relative
           disabled={isLoading || disabled}
         />
         {value.trim() && (
