@@ -3,6 +3,7 @@ import os
 import main
 import requests
 from flask import Flask, send_from_directory, jsonify, request, redirect, session
+from flask_session import Session
 from google_auth_oauthlib.flow import InstalledAppFlow
 from flask_cors import CORS
 from datetime import timedelta, datetime
@@ -19,16 +20,30 @@ app = Flask(__name__, static_folder='static', static_url_path='')
 # Use a strong secret key; load from environment in production
 app.secret_key = os.environ.get("SECRET_KEY") or os.urandom(24)
 
-# Session configuration
+# Determine environment
+environment = os.environ.get("ENVIRONMENT", "development")
+frontend_url = os.getenv('frontend_url', 'http://localhost:8080')
+
+# Session configuration - different for dev and prod
 app.config['SESSION_TYPE'] = 'filesystem'
 app.config['SESSION_PERMANENT'] = True
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=5)
-app.config['SESSION_COOKIE_SECURE'] = True
+app.config['SESSION_COOKIE_SECURE'] = environment == 'production'
 app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['SESSION_COOKIE_SAMESITE'] = 'None'
-app.config['SESSION_COOKIE_DOMAIN'] = '.calgentic.com'
 app.config['SESSION_COOKIE_PATH'] = '/'
 app.config['SESSION_COOKIE_NAME'] = 'calgentic_session'
+
+# Set cookie domain and SameSite based on environment
+if environment == 'production':
+    app.config['SESSION_COOKIE_DOMAIN'] = '.calgentic.com'
+    app.config['SESSION_COOKIE_SAMESITE'] = 'None'
+else:
+    # For development, don't set domain (defaults to current domain)
+    app.config['SESSION_COOKIE_DOMAIN'] = None
+    app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+
+# Initialize Flask-Session
+Session(app)
 
 # Enable CORS for allowed origins
 CORS(app, 
@@ -37,6 +52,8 @@ CORS(app,
          "origins": [
              "http://localhost:8080",
              "http://127.0.0.1:8080",
+             "http://localhost:8081",
+             "http://127.0.0.1:8081",
              "http://localhost:5001",
              "http://127.0.0.1:5001",
              "https://calgentic.com",
@@ -60,8 +77,7 @@ logger = logging.getLogger(__name__)
 # Load Google OAuth credentials from environment variables
 GOOGLE_CLIENT_ID = os.getenv("google_client_id")
 GOOGLE_CLIENT_SECRET = os.getenv("google_client_secret")
-frontend_url = os.getenv('frontend_url', 'http://127.0.0.1:8080')
-redirect_url = os.getenv('redirect_url', f"{frontend_url}/auth/callback")
+redirect_url = os.getenv('redirect_url', 'http://localhost:5001/auth/callback')
 
 logger.info(f"FRONTEND_URL set to: {frontend_url}")
 logger.info(f"REDIRECT_URL set to: {redirect_url}")
@@ -101,6 +117,8 @@ def onboard():
         allowed_origins = [
             "http://localhost:8080",
             "http://127.0.0.1:8080",
+            "http://localhost:8081",
+            "http://127.0.0.1:8081",
             "http://localhost:5001",
             "http://127.0.0.1:5001",
             "https://calgentic.com",
@@ -226,18 +244,31 @@ def login():
 @app.route('/auth/callback')
 def auth_callback():
     try:
+        logger.info("=== AUTH CALLBACK STARTED ===")
+        logger.info(f"Request args: {dict(request.args)}")
+        logger.info(f"Request headers: {dict(request.headers)}")
+        
         code = request.args.get('code')
         if not code:
             logger.error("No code in request")
-            return redirect(f"{frontend_url}/dashboard?auth_error=no_code")
+            return redirect(f"{frontend_url}/login?error=no_code")
+
+        logger.info(f"OAuth code received: {code[:20]}...")
 
         token_url = "https://oauth2.googleapis.com/token"
         client_id = os.getenv('google_client_id')
         client_secret = os.getenv('google_client_secret')
-        redirect_uri = os.getenv('redirect_url', f"{frontend_url}/auth/callback")
+        redirect_uri = os.getenv('redirect_url', 'http://localhost:5001/auth/callback')
+
+        logger.info(f"Using client_id: {client_id}")
+        logger.info(f"Using redirect_uri: {redirect_uri}")
+        
+        if not client_id or not client_secret:
+            logger.error("Missing OAuth credentials!")
+            return redirect(f"{frontend_url}/login?error=missing_credentials")
 
         logger.info(
-            f"Exchanging code for tokens with data: {{'code': '{code}', 'client_id': '{client_id}', "
+            f"Exchanging code for tokens with data: {{'code': '{code[:20]}...', 'client_id': '{client_id}', "
             f"'client_secret': '***', 'redirect_uri': '{redirect_uri}', 'grant_type': 'authorization_code'}}"
         )
 
@@ -249,10 +280,14 @@ def auth_callback():
             'grant_type': 'authorization_code'
         }
 
+        logger.info("Making token exchange request...")
         token_response = requests.post(token_url, data=token_data)
+        logger.info(f"Token response status: {token_response.status_code}")
+        logger.info(f"Token response headers: {dict(token_response.headers)}")
+        
         if not token_response.ok:
             logger.error(f"Token exchange failed: {token_response.status_code} - {token_response.text}")
-            return redirect(f"{frontend_url}/dashboard?auth_error=token_exchange_failed")
+            return redirect(f"{frontend_url}/login?error=token_exchange_failed")
 
         tokens = token_response.json()
         logger.info("Received tokens: %s", {k: v if k not in ['id_token', 'access_token'] else v[:10] + '...' for k, v in tokens.items()})
@@ -260,12 +295,16 @@ def auth_callback():
         id_token = tokens.get('id_token')
         if not id_token:
             logger.error("No ID token received")
-            return redirect(f"{frontend_url}/dashboard?auth_error=no_id_token")
+            return redirect(f"{frontend_url}/login?error=no_id_token")
 
+        logger.info("Decoding ID token...")
         # Decode the ID token without verifying signature
         user_data = jwt.decode(id_token, options={"verify_signature": False})
         logger.info("User authenticated: %s", user_data.get('email'))
+        logger.info("User data keys: %s", list(user_data.keys()))
 
+        logger.info("Setting session data...")
+        # Set session data
         session.permanent = True
         session['user'] = {
             'id': user_data.get('sub'),
@@ -283,15 +322,27 @@ def auth_callback():
             'expires_at': time.time() + tokens.get('expires_in', 3600)
         }
 
+        # Log session data for debugging
         user_email = user_data.get('email', '')
-        # Redirect to the frontend dashboard with auth_success flag
-        redirect_target = f"{frontend_url}/dashboard?auth_success=true&user={user_email}"
-        logger.info(f"Authentication successful, redirecting to: {redirect_target}")
-        return redirect(redirect_target)
+        logger.info(f"Authentication successful for user: {user_email}")
+        logger.info(f"Session data set: {dict(session)}")
+        
+        # Ensure session is saved before redirect
+        session.modified = True
+        logger.info("Session marked as modified")
+        
+        # Redirect directly to dashboard instead of frontend auth callback
+        redirect_url_final = f"{frontend_url}/dashboard"
+        logger.info(f"Redirecting directly to dashboard: {redirect_url_final}")
+        logger.info("=== AUTH CALLBACK COMPLETED ===")
+        return redirect(redirect_url_final)
 
     except Exception as e:
         logger.error(f"Error in callback: {str(e)}")
-        return redirect(f"{frontend_url}/dashboard?auth_error=exception")
+        logger.error(f"Exception type: {type(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return redirect(f"{frontend_url}/login?error=exception")
 
 @app.route("/auth/user")
 def get_user():
@@ -305,47 +356,83 @@ def logout():
     session.pop("user", None)
     return jsonify({"message": "Logged out successfully"})
 
-@app.route("/auth/test-session")
+@app.route('/api/test-session', methods=['GET', 'POST'])
 def test_session():
-    if "test_value" not in session:
-        session["test_value"] = "Test value set at " + str(time.time())
-        is_new = True
+    if request.method == 'POST':
+        # Set a test session value
+        session['test_user'] = {
+            'email': 'test@example.com',
+            'name': 'Test User',
+            'timestamp': datetime.utcnow().isoformat()
+        }
+        session.modified = True
+        logger.info(f"Test session set: {dict(session)}")
+        return jsonify({
+            'success': True,
+            'message': 'Test session created',
+            'session_data': dict(session)
+        })
     else:
-        is_new = False
-
-    return jsonify({
-        "session_working": True,
-        "test_value": session.get("test_value"),
-        "is_new_value": is_new,
-        "session_data": {k: v for k, v in session.items() if k != "user"}
-    })
+        # Check if test session exists
+        logger.info(f"Checking test session: {dict(session)}")
+        return jsonify({
+            'session_exists': 'test_user' in session,
+            'session_data': dict(session),
+            'cookies_received': len(request.cookies) > 0,
+            'cookie_names': list(request.cookies.keys()),
+            'environment': environment
+        })
 
 @app.route('/api/check-auth')
 def check_auth():
     logger.info(f"Check auth request received from: {request.remote_addr}")
-    logger.info(f"Session cookie: {request.cookies.get(app.config['SESSION_COOKIE_NAME'])}")
+    logger.info(f"Request headers: {dict(request.headers)}")
+    logger.info(f"All cookies received: {dict(request.cookies)}")
+    logger.info(f"Session cookie name: {app.config['SESSION_COOKIE_NAME']}")
+    logger.info(f"Session contents: {dict(session)}")
 
-    cookies_received = len(request.cookies) > 0
-    cookie_names = list(request.cookies.keys())
+    # Check if we have any session data
+    if not session:
+        logger.info("No session data found")
+        return jsonify({
+            'authenticated': False,
+            'message': 'No session found',
+            'debug': {
+                'session_exists': False,
+                'cookies_received': len(request.cookies) > 0,
+                'cookie_names': list(request.cookies.keys()),
+                'environment': environment
+            }
+        })
 
+    # Check if user is in session
     if 'user' not in session:
         logger.info("No user in session")
         return jsonify({
             'authenticated': False,
             'message': 'No user session found',
-            'session_exists': 'session' in request.cookies,
-            'cookies_received': cookies_received,
-            'cookie_names': cookie_names
+            'debug': {
+                'session_exists': True,
+                'session_keys': list(session.keys()),
+                'cookies_received': len(request.cookies) > 0,
+                'cookie_names': list(request.cookies.keys()),
+                'environment': environment
+            }
         })
 
+    # Check if tokens exist and are valid
     if 'tokens' not in session:
         logger.info("No tokens in session")
         return jsonify({
             'authenticated': False,
             'message': 'No tokens found',
-            'session_exists': True,
-            'cookies_received': cookies_received,
-            'cookie_names': cookie_names
+            'debug': {
+                'session_exists': True,
+                'user_exists': True,
+                'cookies_received': len(request.cookies) > 0,
+                'cookie_names': list(request.cookies.keys()),
+                'environment': environment
+            }
         })
 
     tokens = session['tokens']
@@ -354,20 +441,30 @@ def check_auth():
         return jsonify({
             'authenticated': False,
             'message': 'Authentication expired',
-            'session_exists': True,
-            'token_expired_at': tokens.get('expires_at'),
-            'current_time': time.time(),
-            'cookies_received': cookies_received,
-            'cookie_names': cookie_names
+            'debug': {
+                'session_exists': True,
+                'user_exists': True,
+                'token_expired_at': tokens.get('expires_at'),
+                'current_time': time.time(),
+                'cookies_received': len(request.cookies) > 0,
+                'cookie_names': list(request.cookies.keys()),
+                'environment': environment
+            }
         })
 
-    logger.info(f"User authenticated: {session['user'].get('email')}")
+    user_email = session['user'].get('email')
+    logger.info(f"User authenticated successfully: {user_email}")
     return jsonify({
         'authenticated': True,
         'user': session['user'],
-        'session_exists': True,
-        'cookies_received': cookies_received,
-        'cookie_names': cookie_names
+        'debug': {
+            'session_exists': True,
+            'user_exists': True,
+            'tokens_valid': True,
+            'cookies_received': len(request.cookies) > 0,
+            'cookie_names': list(request.cookies.keys()),
+            'environment': environment
+        }
     })
 
 @app.route('/api/logout', methods=['POST'])
@@ -398,6 +495,8 @@ def after_request(response):
     allowed_origins = [
         "http://localhost:8080",
         "http://127.0.0.1:8080",
+        "http://localhost:8081",
+        "http://127.0.0.1:8081",
         "http://localhost:5001",
         "http://127.0.0.1:5001",
         "https://calgentic.com",
@@ -419,14 +518,25 @@ def after_request(response):
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept'
     response.headers['Access-Control-Expose-Headers'] = 'Content-Type, Authorization'
     
-    # Ensure cookies are set with the correct attributes for cross-domain
+    # Handle cookies based on environment
     if 'Set-Cookie' in response.headers:
         cookies = response.headers.getlist('Set-Cookie')
+        response.headers.pop('Set-Cookie')  # Remove existing cookies
+        
         for cookie in cookies:
-            if 'SameSite=None' not in cookie:
-                cookie = cookie.replace('SameSite=Lax', 'SameSite=None')
-            if 'Secure' not in cookie:
-                cookie += '; Secure'
+            if environment == 'production':
+                # Production: ensure SameSite=None and Secure
+                if 'SameSite=None' not in cookie:
+                    cookie = cookie.replace('SameSite=Lax', 'SameSite=None')
+                if 'Secure' not in cookie:
+                    cookie += '; Secure'
+            else:
+                # Development: use SameSite=Lax (no Secure needed for localhost)
+                if 'SameSite=None' in cookie:
+                    cookie = cookie.replace('SameSite=None', 'SameSite=Lax')
+                # Remove Secure flag for localhost
+                cookie = cookie.replace('; Secure', '')
+                
             response.headers.add('Set-Cookie', cookie)
     
     return response
@@ -491,6 +601,35 @@ def serve_static(path):
     if os.path.exists(os.path.join(app.static_folder, path)):
         return send_from_directory(app.static_folder, path)
     return send_from_directory(app.static_folder, 'index.html')
+
+@app.route('/api/test-auth', methods=['GET'])
+def test_auth():
+    # Simulate what happens after successful OAuth
+    session.permanent = True
+    session['user'] = {
+        'id': 'test_user_id',
+        'email': 'test@example.com',
+        'name': 'Test User',
+        'picture': 'https://example.com/pic.jpg',
+        'authenticated': True,
+        'login_time': datetime.utcnow().isoformat()
+    }
+
+    session['tokens'] = {
+        'access_token': 'test_access_token',
+        'refresh_token': 'test_refresh_token',
+        'id_token': 'test_id_token',
+        'expires_at': time.time() + 3600
+    }
+    
+    session.modified = True
+    logger.info(f"Test auth session created: {dict(session)}")
+    
+    return jsonify({
+        'success': True,
+        'message': 'Test authentication session created',
+        'session_data': dict(session)
+    })
 
 if __name__ == '__main__':
     # In production, use a proper WSGI server (e.g., Gunicorn or uWSGI)
