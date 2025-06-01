@@ -1,80 +1,87 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
-import { useAuth } from '@/contexts/AuthContext';
+import { useNavigate } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
-import { toast } from 'sonner';
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:5001';
 
 const AuthCallback = () => {
-  const { isAuthenticated, checkAuth } = useAuth();
-  const [isVerifying, setIsVerifying] = useState(true);
   const navigate = useNavigate();
-  const location = useLocation();
+  const [isVerifying, setIsVerifying] = useState(true);
+  const [attempts, setAttempts] = useState(0);
+
+  const checkAuthStatus = async () => {
+    try {
+      console.log(`AuthCallback: Checking authentication status (attempt ${attempts + 1})`);
+      
+      const response = await fetch(`${API_BASE_URL}/api/check-auth`, {
+        method: "GET",
+        credentials: "include",
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
+      });
+
+      console.log('AuthCallback: Auth check response status:', response.status);
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log('AuthCallback: Auth check response data:', data);
+        
+        if (data.authenticated) {
+          console.log('AuthCallback: Authentication verified, redirecting to dashboard');
+          setIsVerifying(false);
+          navigate('/dashboard', { replace: true });
+          return true;
+        } else {
+          console.log('AuthCallback: Not authenticated yet:', data.message);
+          console.log('AuthCallback: Debug info:', data.debug);
+          return false;
+        }
+      } else {
+        console.error('AuthCallback: Auth check failed with status:', response.status);
+        return false;
+      }
+    } catch (error) {
+      console.error('AuthCallback: Error checking auth status:', error);
+      return false;
+    }
+  };
 
   useEffect(() => {
-    const handleAuthRedirect = async () => {
-      try {
-        // Parse URL parameters
-        const searchParams = new URLSearchParams(location.search);
-        const error = searchParams.get('error');
-        const code = searchParams.get('code');
-        const authSuccess = searchParams.get('auth_success');
-        const userEmail = searchParams.get('user');
-        
-        console.log('AuthCallback: URL parameters', { error, code, authSuccess, userEmail });
-        
-        // Handle error case
-        if (error) {
-          console.error('Authentication error:', error);
-          toast.error('Authentication failed. Please try again.');
-          navigate('/login');
-          return;
+    console.log('AuthCallback: Component mounted, waiting for authentication...');
+    
+    const verifyAuth = async () => {
+      // Wait a bit for the backend to process the authentication
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      const isAuthenticated = await checkAuthStatus();
+      
+      if (!isAuthenticated) {
+        if (attempts < 5) {
+          console.log(`AuthCallback: Not authenticated yet, retrying in 2 seconds (attempt ${attempts + 1}/5)`);
+          setAttempts(prev => prev + 1);
+          setTimeout(verifyAuth, 2000);
+        } else {
+          console.log('AuthCallback: Max attempts reached, redirecting to login');
+          setIsVerifying(false);
+          navigate('/login?error=auth_timeout', { replace: true });
         }
-
-        // If we have an auth_success parameter, we can navigate directly
-        if (authSuccess === 'true' && userEmail) {
-          console.log('Authentication successful, redirecting to dashboard');
-          await checkAuth();
-          navigate('/dashboard', { replace: true });
-          return;
-        }
-
-        // If we have a code, verify authentication
-        if (code) {
-          console.log('Verifying authentication with code');
-          const isAuthenticated = await checkAuth();
-          if (isAuthenticated) {
-            console.log('Authentication verified, redirecting to dashboard');
-            navigate('/dashboard', { replace: true });
-          } else {
-            console.error('Authentication verification failed');
-            toast.error('Authentication failed. Please try again.');
-            navigate('/login');
-          }
-          return;
-        }
-
-        // If we reach here, something went wrong
-        console.error('No authentication parameters found');
-        toast.error('Authentication failed. Please try again.');
-        navigate('/login');
-      } catch (error) {
-        console.error('Error in auth callback:', error);
-        toast.error('An error occurred during authentication. Please try again.');
-        navigate('/login');
-      } finally {
-        setIsVerifying(false);
       }
     };
 
-    handleAuthRedirect();
-  }, [location, navigate, checkAuth]);
+    verifyAuth();
+  }, [navigate]);
 
   if (isVerifying) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
           <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4" />
-          <p className="text-lg">Verifying authentication...</p>
+          <p className="text-lg">Completing authentication...</p>
+          <p className="text-sm text-gray-500 mt-2">
+            {attempts > 0 ? `Verifying... (${attempts}/5)` : 'Please wait...'}
+          </p>
         </div>
       </div>
     );
