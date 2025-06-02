@@ -246,7 +246,7 @@ def promptToEvent(prompt, user_tz):
         
         When interpreting dates and times:
         - For relative dates like "tomorrow", "next week", etc., calculate the actual date based on today's date.
-        - Always use the current year ({today_str.year}) for dates unless a specific year is mentioned.
+        - Always use the current year ({now_local.year}) for dates unless a specific year is mentioned.
         - Never schedule events in the past.
         - When a user specifies a time (like 9 AM), use that EXACT time. Do not adjust for any timezone differences.
         - Use the user's local timezone offset of {tz_offset} in the output.
