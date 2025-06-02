@@ -25,19 +25,11 @@ const AuthCallback = () => {
       console.log('AuthCallback: Auth check response status:', response.status);
 
       if (response.ok) {
-        const data = await response.json();
-        console.log('AuthCallback: Auth check response data:', data);
-        
-        if (data.authenticated) {
-          console.log('AuthCallback: Authentication verified, redirecting to dashboard');
-          setIsVerifying(false);
-          navigate('/dashboard', { replace: true });
-          return true;
-        } else {
-          console.log('AuthCallback: Not authenticated yet:', data.message);
-          console.log('AuthCallback: Debug info:', data.debug);
-          return false;
-        }
+        // Status 200 indicates successful authentication; redirect to dashboard
+        console.log('AuthCallback: Authentication successful (status OK), redirecting to dashboard');
+        setIsVerifying(false);
+        navigate('/dashboard', { replace: true });
+        return true;
       } else {
         console.error('AuthCallback: Auth check failed with status:', response.status);
         return false;
