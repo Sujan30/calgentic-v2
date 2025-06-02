@@ -224,26 +224,29 @@ def promptToEvent(prompt, user_tz):
         )
         
         # Get current date and timezone for reference
-        local_tz = datetime.datetime.now().astimezone().tzinfo
-        current_date = datetime.datetime.now().astimezone()
         
-        # Get the timezone offset as a string (e.g., "-07:00")
-        tz_offset = current_date.strftime('%z')
-        # Format it with a colon (e.g., "-07:00")
-        if len(tz_offset) == 5:
-            tz_offset = f"{tz_offset[:3]}:{tz_offset[3:]}"
+        
+
+        zone = pytz.timezone(user_tz)
+        now_local = datetime.datetime.now(zone)
+        today_str = now_local.strftime("%Y-%m-%d")           # e.g. "2025-06-01"
+        time_str  = now_local.strftime("%H:%M:%S")           # e.g. "14:23:45"
+        tz_offset = now_local.strftime("%z")                 # e.g. "-0700"
+        # Insert the colon so GPT sees "-07:00":
+        tz_offset = f"{tz_offset[:3]}:{tz_offset[3:]}"
         
         print(f"Local timezone offset: {tz_offset}")
         
         modified_prompt = f"""
         You are a calendar assistant. Given the user's input, determine if they want to create a new event or view existing events.
         
-        Today's date is {current_date.strftime('%Y-%m-%d')} and the current time is {current_date.strftime('%H:%M:%S')} in timezone {tz_offset}.
-        **The user’s IANA timezone is {user_tz}.**  So you will make events in the users time zone
+        Today's date is {today_str} in the timezone {time_str} in the time zone {tz_offset} which is the users time zone as {user_tz}
+        When interpreting “tomorrow at 5pm”, interpret “5pm” in exactly {user_tz} (including DST).  
+        If they want to create an event, return raw JSON only:
         
         When interpreting dates and times:
         - For relative dates like "tomorrow", "next week", etc., calculate the actual date based on today's date.
-        - Always use the current year ({current_date.year}) for dates unless a specific year is mentioned.
+        - Always use the current year ({today_str.year}) for dates unless a specific year is mentioned.
         - Never schedule events in the past.
         - When a user specifies a time (like 9 AM), use that EXACT time. Do not adjust for any timezone differences.
         - Use the user's local timezone offset of {tz_offset} in the output.
@@ -406,116 +409,128 @@ def formatEvent(event):
             "message": "Error formatting event",
             "error": str(e)
         }
+def findEvent(query_details, user_tz):
+    """
+    Finds events based on provided criteria in the user’s timezone.
+    - query_details may include:
+        - date:       "YYYY-MM-DD"
+        - title:      string
+        - start:      full ISO-8601 string with offset (e.g. "2025-06-02T17:00:00+02:00")
+        - end:        full ISO-8601 string with offset
+        - calendarId: string (defaults to "primary")
+    - user_tz is the user’s IANA timezone (e.g. "America/Los_Angeles").
+    """
+    global service, creds
 
-def findEvent(query_details):
-    """Finds an event based on provided criteria."""
-    global service
-    global creds
-    
-    # Initialize service if not already done
+    # Initialize Google Calendar service if needed
     if service is None and creds is not None:
-        service = build('calendar', 'v3', credentials=creds)
-    
-    # Use get() method to safely access dictionary keys with default values
-    date = query_details.get('date', None)
-    title = query_details.get('title', None)
-    start = query_details.get('start', None)
-    end = query_details.get('end', None)
-    calendarId = query_details.get('calendarId', 'primary')
-    
+        service = build("calendar", "v3", credentials=creds)
+
+    # Safely pull out fields
+    date_str    = query_details.get("date", None)       # "YYYY-MM-DD"
+    title       = query_details.get("title", None)
+    start_iso   = query_details.get("start", None)      # "2025-06-02T17:00:00+02:00"
+    end_iso     = query_details.get("end", None)
+    cal_id      = query_details.get("calendarId", "primary")
+
     try:
+        tz = pytz.timezone(user_tz)
         timeMin = None
         timeMax = None
-        
-        # Set up time range based on available parameters
-        if start:
-            start_datetime = datetime.datetime.fromisoformat(start).astimezone(datetime.timezone.utc)
-            timeMin = start_datetime.isoformat()
-            
-            if end:
-                end_datetime = datetime.datetime.fromisoformat(end).astimezone(datetime.timezone.utc)
-                timeMax = end_datetime.isoformat()
-            elif date:
-                date_obj = datetime.datetime.fromisoformat(date).astimezone(datetime.timezone.utc).date()
-                timeMax = datetime.datetime.combine(date_obj, datetime.time.max, tzinfo=datetime.timezone.utc).isoformat()
+
+        # 1) If full ISO start is provided, convert from that zone to UTC
+        if start_iso:
+            # This will parse the offset inside start_iso, e.g. "+02:00", then convert to UTC
+            start_dt_utc = datetime.datetime.fromisoformat(start_iso).astimezone(datetime.timezone.utc)
+            timeMin = start_dt_utc.isoformat()
+
+            if end_iso:
+                end_dt_utc = datetime.datetime.fromisoformat(end_iso).astimezone(datetime.timezone.utc)
+                timeMax = end_dt_utc.isoformat()
+            elif date_str:
+                # If they gave a date and a start, interpret date in user_tz, then set timeMax to end of that local day
+                date_local = datetime.datetime.fromisoformat(date_str).date()
+                # midnight at user’s timezone
+                start_of_day_local = tz.localize(datetime.datetime.combine(date_local, datetime.time.min))
+                end_of_day_local   = tz.localize(datetime.datetime.combine(date_local, datetime.time.max))
+                timeMax = end_of_day_local.astimezone(datetime.timezone.utc).isoformat()
             else:
-                date_obj = start_datetime.date()
-                timeMax = datetime.datetime.combine(date_obj, datetime.time.max, tzinfo=datetime.timezone.utc).isoformat()
-        elif date:
-            date_obj = datetime.datetime.fromisoformat(date).astimezone(datetime.timezone.utc).date()
-            timeMin = datetime.datetime.combine(date_obj, datetime.time.min, tzinfo=datetime.timezone.utc).isoformat()
-            timeMax = datetime.datetime.combine(date_obj, datetime.time.max, tzinfo=datetime.timezone.utc).isoformat()
+                # If no end but start given, set timeMax to end of that same local date
+                local_date = start_dt_utc.astimezone(tz).date()
+                end_of_day_local = tz.localize(datetime.datetime.combine(local_date, datetime.time.max))
+                timeMax = end_of_day_local.astimezone(datetime.timezone.utc).isoformat()
+
+        # 2) If only date (no start) is provided, interpret midnight→23:59:59 in user_tz
+        elif date_str:
+            date_local = datetime.datetime.fromisoformat(date_str).date()
+            start_of_day_local = tz.localize(datetime.datetime.combine(date_local, datetime.time.min))
+            end_of_day_local   = tz.localize(datetime.datetime.combine(date_local, datetime.time.max))
+            timeMin = start_of_day_local.astimezone(datetime.timezone.utc).isoformat()
+            timeMax = end_of_day_local.astimezone(datetime.timezone.utc).isoformat()
+
+        # 3) If neither start nor date is provided, default to “today” in user_tz
         else:
-            # If no date or time specified, use current date
-            today = datetime.datetime.now(datetime.timezone.utc).date()
-            timeMin = datetime.datetime.combine(today, datetime.time.min, tzinfo=datetime.timezone.utc).isoformat()
-            timeMax = datetime.datetime.combine(today, datetime.time.max, tzinfo=datetime.timezone.utc).isoformat()
-        
-        # Build the query parameters
+            now_local = datetime.datetime.now(tz)
+            today_local = now_local.date()
+            start_of_day_local = tz.localize(datetime.datetime.combine(today_local, datetime.time.min))
+            end_of_day_local   = tz.localize(datetime.datetime.combine(today_local, datetime.time.max))
+            timeMin = start_of_day_local.astimezone(datetime.timezone.utc).isoformat()
+            timeMax = end_of_day_local.astimezone(datetime.timezone.utc).isoformat()
+
+        # Build the query parameters for Google Calendar (all times must be in UTC for the API)
         params = {
-            'calendarId': calendarId,
-            'timeMin': timeMin,
-            'timeMax': timeMax,
-            'singleEvents': True,
-            'orderBy': 'startTime',
-            'maxResults': 10
+            "calendarId": cal_id,
+            "timeMin": timeMin,
+            "timeMax": timeMax,
+            "singleEvents": True,
+            "orderBy": "startTime",
+            "maxResults": 10,
         }
-        
-        # Add title as a search query if provided
+
         if title:
-            params['q'] = title
-        
-        # Execute the query
+            params["q"] = title
+
         events_result = service.events().list(**params).execute()
-        events = events_result.get('items', [])
-        
+        events = events_result.get("items", [])
+
         if not events:
             return {
                 "success": True,
                 "message": "No events found for the specified criteria.",
                 "events": []
             }
-        
-        # Format the events for response
+
         formatted_events = []
-        for event in events:
-            formatted_event = {
-                'summary': event.get('summary', 'No title'),
-                'description': event.get('description', 'No description'),
-                'start': event.get('start', {}).get('dateTime', event.get('start', {}).get('date', 'No start time')),
-                'end': event.get('end', {}).get('dateTime', event.get('end', {}).get('date', 'No end time')),
-                'link': event.get('htmlLink', 'No link available')
-            }
-            formatted_events.append(formatted_event)
-        
+        for ev in events:
+            formatted_events.append({
+                "summary": ev.get("summary", "No title"),
+                "description": ev.get("description", "No description"),
+                # These are returned in the event’s own timezone, so just relay them as-is
+                "start": ev.get("start", {}).get("dateTime", ev.get("start", {}).get("date", "No start time")),
+                "end":   ev.get("end", {}).get("dateTime", ev.get("end", {}).get("date", "No end time")),
+                "link":  ev.get("htmlLink", "No link available")
+            })
+
         return {
             "success": True,
             "message": f"Found {len(formatted_events)} events.",
             "events": formatted_events
         }
-        
+
     except HttpError as error:
-        print(f'An error occurred: {error}')
+        print(f"An error occurred: {error}")
         return {
             "success": False,
             "message": "Failed to retrieve events",
-            "error": f"An error occurred: {str(error)}"
+            "error": str(error)
         }
     except Exception as e:
-        print(f'Unexpected error: {e}')
+        print(f"Unexpected error: {e}")
         return {
             "success": False,
             "message": "Failed to retrieve events",
-            "error": f"Unexpected error: {str(e)}"
+            "error": str(e)
         }
-
-
-
-
-        
-
-    except:
-        print("error")
    
 def main():
     calendarAuth()

@@ -92,6 +92,7 @@ export function getFullApiUrl(endpoint: string): string {
 // Function to send a prompt to the backend
 export async function sendPrompt(prompt: string): Promise<CalendarResponse> {
   const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  console.log("Detected users time zone", userTimeZone);
   try {
     console.log('Sending prompt to:', getFullApiUrl('prompt'));
     console.log('Prompt content:', prompt);
