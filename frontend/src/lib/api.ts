@@ -3,6 +3,9 @@ import axios from 'axios';
 // Define the base URL for your API
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:5001';
 
+// This will return something like "America/Los_Angeles" or "Europe/London"
+
+
 // Create axios instance with default config
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -88,11 +91,15 @@ export function getFullApiUrl(endpoint: string): string {
 
 // Function to send a prompt to the backend
 export async function sendPrompt(prompt: string): Promise<CalendarResponse> {
+  const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   try {
     console.log('Sending prompt to:', getFullApiUrl('prompt'));
     console.log('Prompt content:', prompt);
 
-    const response = await api.post('/prompt', { prompt });
+    const response = await api.post('/prompt', { 
+      prompt, 
+      userTimeZone
+     });
     
     console.log('Response status:', response.status);
     console.log('Response headers:', response.headers);
