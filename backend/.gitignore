@@ -10,3 +10,6 @@ credentials.json
 flask_session/
 test_cookies.txt
 cookies.txt
+SUPABASE_SETUP.md
+supabase_users_table.sql
+supabase_prompts_table.sql

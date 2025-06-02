@@ -10,6 +10,9 @@ google-api-python-client==2.118.0
 # OpenAI
 openai==1.82.0
 
+# Database
+supabase==2.4.4
+
 # Environment and Configuration
 python-dotenv==1.0.1
 

@@ -6,11 +6,13 @@ from flask import Flask, send_from_directory, jsonify, request, redirect, sessio
 from flask_session import Session
 from google_auth_oauthlib.flow import InstalledAppFlow
 from flask_cors import CORS
-from datetime import timedelta, datetime
+from datetime import timedelta, datetime, UTC
 import time
 from dotenv import load_dotenv
 import logging
 import jwt
+import uuid
+from supabase import create_client, Client
 
 # Load environment variables from .env file
 load_dotenv()
@@ -19,6 +21,17 @@ app = Flask(__name__, static_folder='static', static_url_path='')
 
 # Use a strong secret key; load from environment in production
 app.secret_key = os.environ.get("SECRET_KEY") or os.urandom(24)
+
+# Initialize Supabase client
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
+
+if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+    logger = logging.getLogger(__name__)
+    logger.warning("Supabase credentials not found. User data will not be persisted.")
+    supabase: Client = None
+else:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
 # Determine environment
 environment = os.environ.get("FLASK_ENV", "development")
@@ -75,6 +88,155 @@ CORS(app,
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# User Database Operations
+def create_or_update_user(email, name, google_id=None, picture=None):
+    """Create or update user in Supabase database"""
+    if not supabase:
+        logger.warning("Supabase not configured. Skipping user database operation.")
+        return None
+    
+    try:
+        # Check if user exists
+        existing_user = supabase.table('users').select('*').eq('email', email).execute()
+        
+        user_data = {
+            'email': email,
+            'name': name,
+            'updated_at': datetime.now(UTC).isoformat()
+        }
+        
+        if google_id:
+            user_data['google_id'] = google_id
+        if picture:
+            user_data['picture'] = picture
+            
+        if existing_user.data:
+            # Update existing user
+            user_id = existing_user.data[0]['id']
+            result = supabase.table('users').update(user_data).eq('id', user_id).execute()
+            logger.info(f"Updated user: {email}")
+            return result.data[0] if result.data else None
+        else:
+            # Create new user
+            user_data['id'] = str(uuid.uuid4())
+            user_data['created_at'] = datetime.now(UTC).isoformat()
+            result = supabase.table('users').insert(user_data).execute()
+            logger.info(f"Created new user: {email}")
+            return result.data[0] if result.data else None
+            
+    except Exception as e:
+        logger.error(f"Error in create_or_update_user: {str(e)}")
+        return None
+
+def get_user_by_email(email):
+    """Get user from database by email"""
+    if not supabase:
+        return None
+        
+    try:
+        result = supabase.table('users').select('*').eq('email', email).execute()
+        return result.data[0] if result.data else None
+    except Exception as e:
+        logger.error(f"Error getting user by email: {str(e)}")
+        return None
+
+def get_user_by_id(user_id):
+    """Get user from database by ID"""
+    if not supabase:
+        return None
+        
+    try:
+        result = supabase.table('users').select('*').eq('id', user_id).execute()
+        return result.data[0] if result.data else None
+    except Exception as e:
+        logger.error(f"Error getting user by ID: {str(e)}")
+        return None
+
+# Prompt Database Operations
+def create_prompt_log(user_email, user_id, prompt_text, ai_response=None, action_type=None, 
+                     status='processing', error_message=None, user_timezone=None, 
+                     processing_time_ms=None, token_usage=None, event_created=False, 
+                     event_data=None, ip_address=None, user_agent=None):
+    """Create a new prompt log entry in Supabase database"""
+    if not supabase:
+        logger.warning("Supabase not configured. Skipping prompt logging.")
+        return None
+    
+    try:
+        prompt_data = {
+            'id': str(uuid.uuid4()),
+            'user_id': user_id,
+            'user_email': user_email,
+            'prompt_text': prompt_text,
+            'ai_response': ai_response,
+            'action_type': action_type,
+            'status': status,
+            'error_message': error_message,
+            'user_timezone': user_timezone,
+            'processing_time_ms': processing_time_ms,
+            'token_usage': token_usage,
+            'event_created': event_created,
+            'event_data': event_data,
+            'ip_address': ip_address,
+            'user_agent': user_agent,
+            'created_at': datetime.now(UTC).isoformat()
+        }
+        
+        result = supabase.table('prompts').insert(prompt_data).execute()
+        logger.info(f"Created prompt log for user: {user_email}")
+        return result.data[0] if result.data else None
+        
+    except Exception as e:
+        logger.error(f"Error creating prompt log: {str(e)}")
+        return None
+
+def update_prompt_log(prompt_id, ai_response=None, status='success', error_message=None, 
+                     processing_time_ms=None, token_usage=None, event_created=False, 
+                     event_data=None):
+    """Update an existing prompt log entry"""
+    if not supabase:
+        return None
+        
+    try:
+        update_data = {
+            'updated_at': datetime.now(UTC).isoformat()
+        }
+        
+        if ai_response is not None:
+            update_data['ai_response'] = ai_response
+        if status is not None:
+            update_data['status'] = status
+        if error_message is not None:
+            update_data['error_message'] = error_message
+        if processing_time_ms is not None:
+            update_data['processing_time_ms'] = processing_time_ms
+        if token_usage is not None:
+            update_data['token_usage'] = token_usage
+        if event_created is not None:
+            update_data['event_created'] = event_created
+        if event_data is not None:
+            update_data['event_data'] = event_data
+            
+        result = supabase.table('prompts').update(update_data).eq('id', prompt_id).execute()
+        logger.info(f"Updated prompt log: {prompt_id}")
+        return result.data[0] if result.data else None
+        
+    except Exception as e:
+        logger.error(f"Error updating prompt log: {str(e)}")
+        return None
+
+def get_user_prompts(user_email, limit=50, offset=0):
+    """Get prompts for a specific user"""
+    if not supabase:
+        return []
+        
+    try:
+        result = supabase.table('prompts').select('*').eq('user_email', user_email).order('created_at', desc=True).limit(limit).offset(offset).execute()
+        return result.data
+    except Exception as e:
+        logger.error(f"Error getting user prompts: {str(e)}")
+        return []
 
 # Load Google OAuth credentials from environment variables
 GOOGLE_CLIENT_ID = os.getenv("google_client_id")
@@ -136,100 +298,334 @@ def onboard():
         response.headers["Access-Control-Max-Age"] = "3600"
         return response
 
+    # Track processing time
+    start_time = time.time()
+    prompt_log_id = None
+    
+    # CORS response headers
+    response_headers = {
+        "Access-Control-Allow-Origin": request.headers.get("Origin", "https://calgentic.com"),
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept",
+        "Access-Control-Expose-Headers": "Content-Type, Authorization",
+    }
+
     try:
         data = request.get_json()
         logger.info("Received JSON data: %s", data)
 
+        # Get user information from session
+        user_session = session.get("user")
+        user_email = user_session.get('email') if user_session else "anonymous"
+        user_id = user_session.get('db_user_id') if user_session else None
+        
+        # Only log if user is authenticated (has valid user_id)
+        should_log = user_email != "anonymous" and user_id is not None
+        
         # ── Validate that both "prompt" and "userTimeZone" exist ─────────────────
         if not data or "prompt" not in data or "userTimeZone" not in data:
-            logger.error("Missing 'prompt' or 'userTimeZone' in request body")
-            return (
-                jsonify({"error": "Request body must include both 'prompt' and 'userTimeZone'."}),
-                400,
-            )
+            error_msg = "Request body must include both 'prompt' and 'userTimeZone'."
+            logger.error(error_msg)
+            
+            # Log failed request only if user is authenticated
+            if should_log:
+                try:
+                    create_prompt_log(
+                        user_email=user_email,
+                        user_id=user_id,
+                        prompt_text=data.get("prompt", "") if data else "",
+                        status='error',
+                        error_message=error_msg,
+                        user_timezone=data.get("userTimeZone") if data else None,
+                        ip_address=str(request.remote_addr),
+                        user_agent=request.headers.get('User-Agent', '')
+                    )
+                except Exception as log_error:
+                    logger.error(f"Failed to log prompt error: {log_error}")
+            
+            return jsonify({"error": error_msg}), 400, response_headers
 
         prompt = data["prompt"]
         user_tz = data["userTimeZone"]
         logger.info("Processing prompt: %s", prompt)
         logger.info("UserTimeZone: %s", user_tz)
 
-        # CORS response headers
-        response_headers = {
-            "Access-Control-Allow-Origin": request.headers.get("Origin", "https://calgentic.com"),
-            "Access-Control-Allow-Credentials": "true",
-            "Access-Control-Allow-Methods": "POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept",
-            "Access-Control-Expose-Headers": "Content-Type, Authorization",
-        }
+        # Create initial prompt log entry only if user is authenticated
+        if should_log:
+            try:
+                prompt_log = create_prompt_log(
+                    user_email=user_email,
+                    user_id=user_id,
+                    prompt_text=prompt,
+                    status='processing',
+                    user_timezone=user_tz,
+                    ip_address=str(request.remote_addr),
+                    user_agent=request.headers.get('User-Agent', '')
+                )
+                prompt_log_id = prompt_log.get('id') if prompt_log else None
+            except Exception as log_error:
+                logger.error(f"Failed to create initial prompt log: {log_error}")
+                prompt_log_id = None
+        else:
+            prompt_log_id = None
 
         # ── Pass BOTH prompt and user_tz into promptToEvent ───────────────────────
         ai_response = main.promptToEvent(prompt, user_tz)
 
         if isinstance(ai_response, dict) and "error" in ai_response:
+            processing_time_ms = int((time.time() - start_time) * 1000)
             logger.error("Error in prompt processing: %s", ai_response["error"])
+            
+            # Update prompt log with error
+            if prompt_log_id:
+                try:
+                    update_prompt_log(
+                        prompt_id=prompt_log_id,
+                        ai_response=ai_response,
+                        status='error',
+                        error_message=ai_response.get("error"),
+                        processing_time_ms=processing_time_ms
+                    )
+                except Exception as log_error:
+                    logger.error(f"Failed to update prompt log: {log_error}")
+            
             return jsonify(ai_response), 400, response_headers
 
         response_dict = ai_response
         if "action_type" not in response_dict:
-            logger.error("Missing action_type in response")
-            return (
-                jsonify({"error": "Invalid response format from AI service"}),
-                400,
-                response_headers,
-            )
+            processing_time_ms = int((time.time() - start_time) * 1000)
+            error_msg = "Invalid response format from AI service"
+            logger.error(error_msg)
+            
+            # Update prompt log with error
+            if prompt_log_id:
+                try:
+                    update_prompt_log(
+                        prompt_id=prompt_log_id,
+                        ai_response=response_dict,
+                        status='error',
+                        error_message=error_msg,
+                        processing_time_ms=processing_time_ms
+                    )
+                except Exception as log_error:
+                    logger.error(f"Failed to update prompt log: {log_error}")
+            
+            return jsonify({"error": error_msg}), 400, response_headers
 
-        if response_dict["action_type"] == "create":
+        action_type = response_dict["action_type"]
+        event_created = False
+        event_data = None
+
+        if action_type == "create":
             if "eventParams" not in response_dict or "eventCompletion" not in response_dict:
-                logger.error("Missing eventParams or eventCompletion in create action")
-                return jsonify({"error": "Invalid event creation parameters"}), 400, response_headers
+                processing_time_ms = int((time.time() - start_time) * 1000)
+                error_msg = "Invalid event creation parameters"
+                logger.error(error_msg)
+                
+                if prompt_log_id:
+                    try:
+                        update_prompt_log(
+                            prompt_id=prompt_log_id,
+                            ai_response=response_dict,
+                            status='error',
+                            error_message=error_msg,
+                            processing_time_ms=processing_time_ms
+                        )
+                    except Exception as log_error:
+                        logger.error(f"Failed to update prompt log: {log_error}")
+                
+                return jsonify({"error": error_msg}), 400, response_headers
 
             eventParams = response_dict["eventParams"]
             if isinstance(eventParams, list) and len(eventParams) > 0:
                 event_data = eventParams[0]
-
-                # ── Inject the same user_tz into the event_data dict so formatEvent can pick it up ──
                 event_data["timeZone"] = user_tz
 
                 try:
                     result = main.formatEvent(event_data)
+                    processing_time_ms = int((time.time() - start_time) * 1000)
+                    
                     if result and result.get("success", False):
+                        event_created = True
                         message = response_dict["eventCompletion"]
+                        
+                        # Update prompt log with success
+                        if prompt_log_id:
+                            try:
+                                update_prompt_log(
+                                    prompt_id=prompt_log_id,
+                                    ai_response=response_dict,
+                                    status='success',
+                                    processing_time_ms=processing_time_ms,
+                                    event_created=True,
+                                    event_data=event_data,
+                                    action_type=action_type
+                                )
+                            except Exception as log_error:
+                                logger.error(f"Failed to update prompt log: {log_error}")
+                        
                         return jsonify({"message": message, "success": True}), 200, response_headers
                     else:
-                        logger.error("Failed to format/create event: %s", result)
+                        error_msg = f"Failed to create event: {result}"
+                        logger.error(error_msg)
+                        
+                        if prompt_log_id:
+                            try:
+                                update_prompt_log(
+                                    prompt_id=prompt_log_id,
+                                    ai_response=response_dict,
+                                    status='error',
+                                    error_message=error_msg,
+                                    processing_time_ms=processing_time_ms,
+                                    event_data=event_data,
+                                    action_type=action_type
+                                )
+                            except Exception as log_error:
+                                logger.error(f"Failed to update prompt log: {log_error}")
+                        
                         return jsonify({"error": "Failed to create event"}), 400, response_headers
+                        
                 except Exception as e:
+                    processing_time_ms = int((time.time() - start_time) * 1000)
+                    error_msg = f"Error processing event: {str(e)}"
                     logger.error("Exception in formatEvent: %s", str(e))
-                    return jsonify({"error": f"Error processing event: {str(e)}"}), 400, response_headers
+                    
+                    if prompt_log_id:
+                        try:
+                            update_prompt_log(
+                                prompt_id=prompt_log_id,
+                                ai_response=response_dict,
+                                status='error',
+                                error_message=error_msg,
+                                processing_time_ms=processing_time_ms,
+                                event_data=event_data,
+                                action_type=action_type
+                            )
+                        except Exception as log_error:
+                            logger.error(f"Failed to update prompt log: {log_error}")
+                    
+                    return jsonify({"error": error_msg}), 400, response_headers
             else:
-                logger.error("eventParams is not in the expected format")
-                return jsonify({"error": "Invalid event parameters format"}), 400, response_headers
+                processing_time_ms = int((time.time() - start_time) * 1000)
+                error_msg = "Invalid event parameters format"
+                logger.error(error_msg)
+                
+                if prompt_log_id:
+                    try:
+                        update_prompt_log(
+                            prompt_id=prompt_log_id,
+                            ai_response=response_dict,
+                            status='error',
+                            error_message=error_msg,
+                            processing_time_ms=processing_time_ms,
+                            action_type=action_type
+                        )
+                    except Exception as log_error:
+                        logger.error(f"Failed to update prompt log: {log_error}")
+                
+                return jsonify({"error": error_msg}), 400, response_headers
 
-        elif response_dict["action_type"] == "view":
+        elif action_type == "view":
             if "query_details" not in response_dict:
-                logger.error("Missing query_details in view action")
-                return jsonify({"error": "Missing event query parameters"}), 400, response_headers
+                processing_time_ms = int((time.time() - start_time) * 1000)
+                error_msg = "Missing event query parameters"
+                logger.error(error_msg)
+                
+                if prompt_log_id:
+                    try:
+                        update_prompt_log(
+                            prompt_id=prompt_log_id,
+                            ai_response=response_dict,
+                            status='error',
+                            error_message=error_msg,
+                            processing_time_ms=processing_time_ms,
+                            action_type=action_type
+                        )
+                    except Exception as log_error:
+                        logger.error(f"Failed to update prompt log: {log_error}")
+                
+                return jsonify({"error": error_msg}), 400, response_headers
 
             query_details = response_dict["query_details"]
 
             try:
-                return jsonify(main.findEvent(query_details=query_details, user_tz=user_tz)), 200, response_headers
+                view_result = main.findEvent(query_details=query_details, user_tz=user_tz)
+                processing_time_ms = int((time.time() - start_time) * 1000)
+                
+                # Update prompt log with success
+                if prompt_log_id:
+                    try:
+                        update_prompt_log(
+                            prompt_id=prompt_log_id,
+                            ai_response=response_dict,
+                            status='success',
+                            processing_time_ms=processing_time_ms,
+                            action_type=action_type,
+                            event_data=query_details
+                        )
+                    except Exception as log_error:
+                        logger.error(f"Failed to update prompt log: {log_error}")
+                
+                return jsonify(view_result), 200, response_headers
+                
             except Exception as e:
-                logger.error("Error in findEvent: %s", str(e))
-                return jsonify({"error": f"Error finding events: {str(e)}"}), 400, response_headers
+                processing_time_ms = int((time.time() - start_time) * 1000)
+                error_msg = f"Error finding events: {str(e)}"
+                logger.error(error_msg)
+                
+                if prompt_log_id:
+                    try:
+                        update_prompt_log(
+                            prompt_id=prompt_log_id,
+                            ai_response=response_dict,
+                            status='error',
+                            error_message=error_msg,
+                            processing_time_ms=processing_time_ms,
+                            action_type=action_type
+                        )
+                    except Exception as log_error:
+                        logger.error(f"Failed to update prompt log: {log_error}")
+                
+                return jsonify({"error": error_msg}), 400, response_headers
 
         else:
-            logger.error("Unknown action_type: %s", response_dict["action_type"])
+            processing_time_ms = int((time.time() - start_time) * 1000)
+            error_msg = f"Unsupported action type: {action_type}"
+            logger.error(error_msg)
+            
+            if prompt_log_id:
+                try:
+                    update_prompt_log(
+                        prompt_id=prompt_log_id,
+                        ai_response=response_dict,
+                        status='error',
+                        error_message=error_msg,
+                        processing_time_ms=processing_time_ms,
+                        action_type=action_type
+                    )
+                except Exception as log_error:
+                    logger.error(f"Failed to update prompt log: {log_error}")
+            
             return jsonify({"error": "Unsupported action type"}), 400, response_headers
 
     except Exception as e:
+        processing_time_ms = int((time.time() - start_time) * 1000)
+        error_msg = f"An unexpected error occurred: {str(e)}"
         logger.error("Unexpected error in prompt endpoint: %s", str(e))
-        return (
-            jsonify({"error": "An unexpected error occurred. Please try again."}),
-            500,
-            response_headers,
-        )
-
+        
+        if prompt_log_id:
+            try:
+                update_prompt_log(
+                    prompt_id=prompt_log_id,
+                    status='error',
+                    error_message=error_msg,
+                    processing_time_ms=processing_time_ms
+                )
+            except Exception as log_error:
+                logger.error(f"Failed to update prompt log: {log_error}")
+        
+        return jsonify({"error": "An unexpected error occurred. Please try again."}), 500, response_headers
 
 @app.route('/api/login')
 def login():
@@ -333,17 +729,38 @@ def auth_callback():
         logger.info("User authenticated: %s", user_data.get('email'))
         logger.info("User data keys: %s", list(user_data.keys()))
 
+        # Save or update user in Supabase database
+        user_email = user_data.get('email')
+        user_name = user_data.get('name')
+        google_id = user_data.get('sub')
+        picture = user_data.get('picture')
+        
+        db_user = create_or_update_user(
+            email=user_email,
+            name=user_name,
+            google_id=google_id,
+            picture=picture
+        )
+        
         logger.info("Setting session data...")
         # Set session data
         session.permanent = True
-        session['user'] = {
+        
+        # Include database user ID if available
+        user_session_data = {
             'id': user_data.get('sub'),
-            'email': user_data.get('email'),
-            'name': user_data.get('name'),
-            'picture': user_data.get('picture'),
+            'email': user_email,
+            'name': user_name,
+            'picture': picture,
             'authenticated': True,
-            'login_time': datetime.utcnow().isoformat()
+            'login_time': datetime.now(UTC).isoformat()
         }
+        
+        # Add database user ID if available
+        if db_user and db_user.get('id'):
+            user_session_data['db_user_id'] = db_user['id']
+            
+        session['user'] = user_session_data
 
         session['tokens'] = {
             'access_token': tokens.get('access_token'),
@@ -353,7 +770,6 @@ def auth_callback():
         }
 
         # Log session data for debugging
-        user_email = user_data.get('email', '')
         logger.info(f"Authentication successful for user: {user_email}")
         logger.info(f"Session data set: {dict(session)}")
         
@@ -393,7 +809,7 @@ def test_session():
         session['test_user'] = {
             'email': 'test@example.com',
             'name': 'Test User',
-            'timestamp': datetime.utcnow().isoformat()
+            'timestamp': datetime.now(UTC).isoformat()
         }
         session.modified = True
         logger.info(f"Test session set: {dict(session)}")
@@ -642,7 +1058,7 @@ def test_auth():
         'name': 'Test User',
         'picture': 'https://example.com/pic.jpg',
         'authenticated': True,
-        'login_time': datetime.utcnow().isoformat()
+        'login_time': datetime.now(UTC).isoformat()
     }
 
     session['tokens'] = {
@@ -660,6 +1076,244 @@ def test_auth():
         'message': 'Test authentication session created',
         'session_data': dict(session)
     })
+
+@app.route('/api/user/profile')
+def get_user_profile():
+    """Get current user's profile from database"""
+    user = session.get("user")
+    if not user:
+        return jsonify({"error": "Not logged in"}), 401
+    
+    # Get user from database if we have db_user_id
+    if user.get('db_user_id'):
+        db_user = get_user_by_id(user['db_user_id'])
+        if db_user:
+            return jsonify({
+                'success': True,
+                'user': {
+                    'id': db_user['id'],
+                    'email': db_user['email'],
+                    'name': db_user['name'],
+                    'picture': db_user.get('picture'),
+                    'google_id': db_user.get('google_id'),
+                    'created_at': db_user.get('created_at'),
+                    'updated_at': db_user.get('updated_at')
+                }
+            })
+    
+    # Fallback to session data
+    return jsonify({
+        'success': True,
+        'user': user,
+        'note': 'Data from session (database user not found)'
+    })
+
+@app.route('/api/user/update', methods=['POST'])
+def update_user_profile():
+    """Update current user's profile"""
+    user = session.get("user")
+    if not user:
+        return jsonify({"error": "Not logged in"}), 401
+    
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        # Only allow updating name for now
+        name = data.get('name')
+        if not name:
+            return jsonify({"error": "Name is required"}), 400
+        
+        # Update in database
+        db_user = create_or_update_user(
+            email=user['email'],
+            name=name,
+            google_id=user.get('id'),
+            picture=user.get('picture')
+        )
+        
+        if db_user:
+            # Update session
+            session['user']['name'] = name
+            session['user']['db_user_id'] = db_user['id']
+            session.modified = True
+            
+            return jsonify({
+                'success': True,
+                'message': 'Profile updated successfully',
+                'user': {
+                    'id': db_user['id'],
+                    'email': db_user['email'],
+                    'name': db_user['name'],
+                    'picture': db_user.get('picture'),
+                    'updated_at': db_user.get('updated_at')
+                }
+            })
+        else:
+            return jsonify({"error": "Failed to update profile"}), 500
+            
+    except Exception as e:
+        logger.error(f"Error updating user profile: {str(e)}")
+        return jsonify({"error": "Failed to update profile"}), 500
+
+@app.route('/api/users', methods=['GET'])
+def list_users():
+    """List all users (admin endpoint - you may want to add admin authentication)"""
+    if not supabase:
+        return jsonify({"error": "Database not configured"}), 500
+    
+    try:
+        result = supabase.table('users').select('id,email,name,created_at,updated_at').execute()
+        return jsonify({
+            'success': True,
+            'users': result.data,
+            'count': len(result.data)
+        })
+    except Exception as e:
+        logger.error(f"Error listing users: {str(e)}")
+        return jsonify({"error": "Failed to list users"}), 500
+
+@app.route('/api/prompts', methods=['GET'])
+def get_user_prompt_history():
+    """Get current user's prompt history"""
+    user = session.get("user")
+    if not user:
+        return jsonify({"error": "Not logged in"}), 401
+    
+    try:
+        # Get pagination parameters
+        page = int(request.args.get('page', 1))
+        limit = min(int(request.args.get('limit', 20)), 100)  # Max 100 per page
+        offset = (page - 1) * limit
+        
+        user_email = user['email']
+        prompts = get_user_prompts(user_email, limit=limit, offset=offset)
+        
+        # Get total count for pagination
+        if supabase:
+            count_result = supabase.table('prompts').select('id', count='exact').eq('user_email', user_email).execute()
+            total_count = count_result.count if hasattr(count_result, 'count') else len(prompts)
+        else:
+            total_count = len(prompts)
+        
+        return jsonify({
+            'success': True,
+            'prompts': prompts,
+            'pagination': {
+                'page': page,
+                'limit': limit,
+                'total': total_count,
+                'pages': (total_count + limit - 1) // limit
+            }
+        })
+    except Exception as e:
+        logger.error(f"Error getting user prompts: {str(e)}")
+        return jsonify({"error": "Failed to retrieve prompt history"}), 500
+
+@app.route('/api/prompts/<prompt_id>', methods=['GET'])
+def get_prompt_details(prompt_id):
+    """Get details of a specific prompt"""
+    user = session.get("user")
+    if not user:
+        return jsonify({"error": "Not logged in"}), 401
+    
+    if not supabase:
+        return jsonify({"error": "Database not configured"}), 500
+    
+    try:
+        # Get prompt and verify it belongs to the user
+        result = supabase.table('prompts').select('*').eq('id', prompt_id).eq('user_email', user['email']).execute()
+        
+        if not result.data:
+            return jsonify({"error": "Prompt not found"}), 404
+        
+        return jsonify({
+            'success': True,
+            'prompt': result.data[0]
+        })
+    except Exception as e:
+        logger.error(f"Error getting prompt details: {str(e)}")
+        return jsonify({"error": "Failed to retrieve prompt details"}), 500
+
+@app.route('/api/prompts/stats', methods=['GET'])
+def get_user_prompt_stats():
+    """Get user's prompt usage statistics"""
+    user = session.get("user")
+    if not user:
+        return jsonify({"error": "Not logged in"}), 401
+    
+    if not supabase:
+        return jsonify({"error": "Database not configured"}), 500
+    
+    try:
+        user_email = user['email']
+        
+        # Get total prompts
+        total_result = supabase.table('prompts').select('id', count='exact').eq('user_email', user_email).execute()
+        total_prompts = total_result.count if hasattr(total_result, 'count') else 0
+        
+        # Get success/error counts
+        success_result = supabase.table('prompts').select('id', count='exact').eq('user_email', user_email).eq('status', 'success').execute()
+        success_count = success_result.count if hasattr(success_result, 'count') else 0
+        
+        error_result = supabase.table('prompts').select('id', count='exact').eq('user_email', user_email).eq('status', 'error').execute()
+        error_count = error_result.count if hasattr(error_result, 'count') else 0
+        
+        # Get events created count
+        events_result = supabase.table('prompts').select('id', count='exact').eq('user_email', user_email).eq('event_created', True).execute()
+        events_created = events_result.count if hasattr(events_result, 'count') else 0
+        
+        # Get recent prompts for activity
+        recent_prompts = supabase.table('prompts').select('created_at,status,action_type').eq('user_email', user_email).order('created_at', desc=True).limit(10).execute()
+        
+        return jsonify({
+            'success': True,
+            'stats': {
+                'total_prompts': total_prompts,
+                'successful_prompts': success_count,
+                'failed_prompts': error_count,
+                'events_created': events_created,
+                'success_rate': round((success_count / total_prompts * 100), 2) if total_prompts > 0 else 0
+            },
+            'recent_activity': recent_prompts.data
+        })
+    except Exception as e:
+        logger.error(f"Error getting prompt stats: {str(e)}")
+        return jsonify({"error": "Failed to retrieve statistics"}), 500
+
+@app.route('/api/admin/prompts', methods=['GET'])
+def get_all_prompts():
+    """Get all prompts (admin endpoint)"""
+    # Note: You should add proper admin authentication here
+    if not supabase:
+        return jsonify({"error": "Database not configured"}), 500
+    
+    try:
+        # Get pagination parameters
+        page = int(request.args.get('page', 1))
+        limit = min(int(request.args.get('limit', 50)), 100)  # Max 100 per page
+        offset = (page - 1) * limit
+        
+        result = supabase.table('prompts').select('*').order('created_at', desc=True).limit(limit).offset(offset).execute()
+        
+        # Get total count
+        count_result = supabase.table('prompts').select('id', count='exact').execute()
+        total_count = count_result.count if hasattr(count_result, 'count') else len(result.data)
+        
+        return jsonify({
+            'success': True,
+            'prompts': result.data,
+            'pagination': {
+                'page': page,
+                'limit': limit,
+                'total': total_count,
+                'pages': (total_count + limit - 1) // limit
+            }
+        })
+    except Exception as e:
+        logger.error(f"Error getting all prompts: {str(e)}")
+        return jsonify({"error": "Failed to retrieve prompts"}), 500
 
 if __name__ == '__main__':
     # In production, use a proper WSGI server (e.g., Gunicorn or uWSGI)
