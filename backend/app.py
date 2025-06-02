@@ -35,8 +35,10 @@ app.config['SESSION_COOKIE_NAME'] = 'calgentic_session'
 
 # Set cookie domain and SameSite based on environment
 if environment == 'production':
-    app.config['SESSION_COOKIE_DOMAIN'] = '.calgentic.com'
+    app.config['SESSION_COOKIE_DOMAIN'] = '.calgentic.onrender.com'
     app.config['SESSION_COOKIE_SAMESITE'] = 'None'
+    app.config['SESSION_COOKIE_SECURE'] = True
+
 else:
     # For development, don't set domain (defaults to current domain)
     app.config['SESSION_COOKIE_DOMAIN'] = None
