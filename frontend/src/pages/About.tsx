@@ -3,6 +3,7 @@ import Header from '@/components/Header';
 import { Calendar, Github, Mail, Linkedin, ExternalLink, Code, Coffee, Heart } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Link } from 'react-router-dom';
+import Footer from '@/components/Footer';
 
 const AboutSection = ({ title, children }: { title: string; children: React.ReactNode }) => (
   <div className="mb-12">
@@ -157,16 +158,8 @@ const About = () => {
       </main>
       
       {/* Footer */}
-      <footer className="border-t border-gray-200 dark:border-gray-800 py-8">
-        <div className="max-w-4xl mx-auto px-4 text-center">
-          <p className="text-gray-600 dark:text-gray-400">
-            © {new Date().getFullYear()} CalGentic. All rights reserved.
-          </p>
-          <p className="text-gray-500 dark:text-gray-500 text-sm mt-2">
-            Made with <Heart className="inline-block w-3 h-3 text-red-500" /> using React, TypeScript, and Flask
-          </p>
-        </div>
-      </footer>
+
+      <Footer/>
     </div>
   );
 };

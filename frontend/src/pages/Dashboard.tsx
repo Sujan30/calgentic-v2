@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
+import Footer from '@/components/Footer';
 
 // Environment variables
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:5001';
@@ -511,6 +512,7 @@ const Dashboard = () => {
           </Tabs>
         </div>
       </main>
+    <Footer/>
     </div>
   );
 };

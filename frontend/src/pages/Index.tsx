@@ -6,6 +6,7 @@ import { Calendar, Clock, ArrowRight, CheckCircle, Sparkles, Zap, Users } from '
 import { sendPrompt, CalendarResponse } from '@/lib/api';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import Footer from '@/components/Footer';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:5001';
 
@@ -293,6 +294,7 @@ const Index = () => {
           </div>
         </div>
       </section>
+      <Footer/>
     </div>
   );
 };
