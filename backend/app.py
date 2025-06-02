@@ -211,8 +211,9 @@ def onboard():
                 return jsonify({"error": "Missing event query parameters"}), 400, response_headers
 
             query_details = response_dict["query_details"]
+
             try:
-                return jsonify(main.findEvent(query_details=query_details)), 200, response_headers
+                return jsonify(main.findEvent(query_details=query_details, user_tz=user_tz)), 200, response_headers
             except Exception as e:
                 logger.error("Error in findEvent: %s", str(e))
                 return jsonify({"error": f"Error finding events: {str(e)}"}), 400, response_headers
