@@ -21,7 +21,7 @@ app = Flask(__name__, static_folder='static', static_url_path='')
 app.secret_key = os.environ.get("SECRET_KEY") or os.urandom(24)
 
 # Determine environment
-environment = os.environ.get("ENVIRONMENT", "development")
+environment = os.environ.get("FLASK_ENV", "development")
 frontend_url = os.getenv('frontend_url', 'http://localhost:8080')
 
 # Session configuration - different for dev and prod
