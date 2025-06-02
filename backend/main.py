@@ -88,123 +88,94 @@ def deleteEvent(date, title, start, end, calendarId='primary'):
 
 
     
-def createEvent(summary, description, start, end=None, calendarId='primary'):
-   try:
-      global service
-      global creds
-      
-      # Call calendarAuth() to ensure credentials are initialized
-      if creds is None:
+
+def createEvent(summary, description, start_iso, end_iso=None, calendar_id="primary", user_tz="UTC"):
+    """
+    Create a Google Calendar event using exactly the user's IANA timezone (user_tz).
+    - `start_iso` and `end_iso` must already be full ISO‐8601 strings with offset (e.g. "2025-06-02T17:00:00+02:00").
+    - `user_tz` is something like "Europe/Paris" or "America/Los_Angeles".
+    """
+    global service, creds
+
+    # Ensure credentials exist
+    if creds is None:
         calendarAuth()
-      
-      # Initialize service if not already done
-      if service is None and creds is not None:
-          service = build('calendar', 'v3', credentials=creds)
-      
-      # Validate inputs
-      if not summary or not start:
-          print("Missing required parameters for createEvent")
-          return False
-      
-      # Parse the datetime strings to ensure they're valid
-      try:
-          # Get the local timezone
-          local_tz = datetime.datetime.now().astimezone().tzinfo
-          local_tz_name = str(local_tz)
-          
-          # Convert timezone name to IANA format if needed
-          if local_tz_name in ['PDT', 'PST']:
-              local_tz_name = 'America/Los_Angeles'
-          elif local_tz_name in ['EDT', 'EST']:
-              local_tz_name = 'America/New_York'
-          elif local_tz_name in ['CDT', 'CST']:
-              local_tz_name = 'America/Chicago'
-          elif local_tz_name in ['MDT', 'MST']:
-              local_tz_name = 'America/Denver'
-          elif local_tz_name in ['GMT', 'UTC']:
-              local_tz_name = 'UTC'
-          
-          print(f"Using timezone: {local_tz_name}")
-          
-          # Parse the start datetime
-          start_dt = datetime.datetime.fromisoformat(start)
-          
-          # If end is not provided or empty, set it to 1 hour after start
-          if not end or end == "":
-              end_dt = start_dt + datetime.timedelta(hours=1)
-              end = end_dt.isoformat()
-              print(f"Setting default end time to 1 hour after start: {end}")
-          else:
-              end_dt = datetime.datetime.fromisoformat(end)
-          
-          # Ensure end time is after start time
-          if end_dt <= start_dt:
-              print("Error: End time must be after start time")
-              return False
-              
-      except ValueError as e:
-          print(f"Invalid datetime format: {e}")
-          return False
-      
-      # Create the event object with proper timezone format
-      event = {
-         'summary': summary,
-         'description': description or "",  # Ensure description is never None
-         'start': {
-            'dateTime': start,
-            'timeZone': local_tz_name,  # Use the converted timezone name
-         },
-         'end': {
-            'dateTime': end,
-            'timeZone': local_tz_name,  # Use the converted timezone name
-         }
-      }
-      
-      # Print the event object for debugging
-      print(f"Event object: {event}")
-      
-      # Add retry logic with timeout handling
-      import socket
-      from googleapiclient.errors import HttpError
-      
-      # Set a timeout for socket operations
-      original_timeout = socket.getdefaulttimeout()
-      socket.setdefaulttimeout(30)  # 30 seconds timeout
-      
-      max_retries = 3
-      retry_count = 0
-      
-      while retry_count < max_retries:
-          try:
-              # Insert the event
-              event = service.events().insert(calendarId=calendarId, body=event).execute()
-              print(f'Event created: {event.get("htmlLink")}')
-              # Reset socket timeout to original value
-              socket.setdefaulttimeout(original_timeout)
-              return event
-          except socket.timeout:
-              retry_count += 1
-              print(f"Request timed out. Retry attempt {retry_count} of {max_retries}")
-              if retry_count >= max_retries:
-                  print("Max retries reached. Could not create event due to timeout.")
-                  # Reset socket timeout to original value
-                  socket.setdefaulttimeout(original_timeout)
-                  return False
-          except HttpError as error:
-              print(f'HTTP error occurred: {error}')
-              # Reset socket timeout to original value
-              socket.setdefaulttimeout(original_timeout)
-              return False
-          except Exception as e:
-              print(f'Unexpected error in createEvent: {str(e)}')
-              # Reset socket timeout to original value
-              socket.setdefaulttimeout(original_timeout)
-              return False
-   except Exception as e:
-      print(f'Unexpected error in createEvent: {str(e)}')
-      import traceback
-      traceback.print_exc()
-      return False
+
+    if service is None and creds is not None:
+        service = build("calendar", "v3", credentials=creds)
+
+    if not summary or not start_iso:
+        print("Missing required parameters for createEvent")
+        return False
+
+    try:
+        # Now that ChatGPT has given us a full ISO‐8601 with offset in start_iso,
+        # we can parse it into a tz-aware datetime:
+        start_dt = datetime.datetime.fromisoformat(start_iso)
+        # If end_iso is omitted, default to 1 hour after:
+        if not end_iso or end_iso == "":
+            end_dt = start_dt + datetime.timedelta(hours=1)
+            end_iso = end_dt.isoformat()
+        else:
+            end_dt = datetime.datetime.fromisoformat(end_iso)
+
+        if end_dt <= start_dt:
+            print("Error: End time must be after start time")
+            return False
+
+    except ValueError as e:
+        print(f"Invalid datetime format: {e}")
+        return False
+
+    # Use the USER’S timezone (user_tz), not server’s. Do NOT compute server‐side tz anymore.
+    event_body = {
+        "summary": summary,
+        "description": description or "",
+        "start": {
+            "dateTime": start_iso,   # e.g. "2025-06-02T17:00:00+02:00"
+            "timeZone": user_tz,     # e.g. "Europe/Paris"
+        },
+        "end": {
+            "dateTime": end_iso,
+            "timeZone": user_tz,
+        },
+    }
+
+    print(f"Event object being sent to Google: {event_body}")
+
+    # Retry logic for timeouts, etc.
+    import socket
+
+    original_timeout = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(30)
+    max_retries = 3
+    retry_count = 0
+
+    while retry_count < max_retries:
+        try:
+            created = service.events().insert(calendarId=calendar_id, body=event_body).execute()
+            print(f"Event created: {created.get('htmlLink')}")
+            socket.setdefaulttimeout(original_timeout)
+            return created
+        except socket.timeout:
+            retry_count += 1
+            print(f"Request timed out. Retry attempt {retry_count} of {max_retries}")
+            if retry_count >= max_retries:
+                print("Max retries reached. Could not create event.")
+                socket.setdefaulttimeout(original_timeout)
+                return False
+        except HttpError as error:
+            print(f"HTTP error occurred: {error}")
+            socket.setdefaulttimeout(original_timeout)
+            return False
+        except Exception as e:
+            print(f"Unexpected error in createEvent: {str(e)}")
+            socket.setdefaulttimeout(original_timeout)
+            return False
+
+    socket.setdefaulttimeout(original_timeout)
+    return False
+
 
 def getEvents(calendarId='primary', day=None):
     if day is None:
@@ -244,7 +215,7 @@ def askPrompt():
 
 
 
-def promptToEvent(prompt):
+def promptToEvent(prompt, user_tz):
     try:
         # Initialize OpenAI client with minimal configuration
         client = OpenAI(
@@ -268,6 +239,7 @@ def promptToEvent(prompt):
         You are a calendar assistant. Given the user's input, determine if they want to create a new event or view existing events.
         
         Today's date is {current_date.strftime('%Y-%m-%d')} and the current time is {current_date.strftime('%H:%M:%S')} in timezone {tz_offset}.
+        **The user’s IANA timezone is {user_tz}.**  So you will make events in the users time zone
         
         When interpreting dates and times:
         - For relative dates like "tomorrow", "next week", etc., calculate the actual date based on today's date.

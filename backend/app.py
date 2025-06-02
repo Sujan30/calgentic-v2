@@ -107,15 +107,15 @@ def log_request_info():
 def index():
     return send_from_directory(app.static_folder, 'index.html')
 
-@app.route('/prompt', methods=['POST', 'OPTIONS'])
+@app.route("/prompt", methods=["POST", "OPTIONS"])
 def onboard():
-    logger.info('Received request to /prompt endpoint')
-    
-    # Handle OPTIONS preflight request
-    if request.method == 'OPTIONS':
-        logger.info('Handling OPTIONS request')
+    logger.info("Received request to /prompt endpoint")
+
+    # Handle OPTIONS preflight
+    if request.method == "OPTIONS":
+        logger.info("Handling OPTIONS request")
         response = app.make_default_options_response()
-        origin = request.headers.get('Origin', '')
+        origin = request.headers.get("Origin", "")
         allowed_origins = [
             "http://localhost:8080",
             "http://127.0.0.1:8080",
@@ -127,81 +127,108 @@ def onboard():
             "https://www.calgentic.com",
             "https://calgentic.onrender.com",
         ]
-        response.headers['Access-Control-Allow-Origin'] = origin if origin in allowed_origins else allowed_origins[0]
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept'
-        response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
-        response.headers['Access-Control-Allow-Credentials'] = 'true'
-        response.headers['Access-Control-Max-Age'] = '3600'
+        response.headers["Access-Control-Allow-Origin"] = (
+            origin if origin in allowed_origins else allowed_origins[0]
+        )
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, Accept"
+        response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Max-Age"] = "3600"
         return response
-    
-    try:
-        # Get prompt from request body
-        data = request.get_json()
-        logger.info('Received JSON data: %s', data)
-        
-        if not data or 'prompt' not in data:
-            logger.error('No prompt provided in request body')
-            return jsonify({"error": "No prompt provided in request body"}), 400
-            
-        prompt = data['prompt']
-        logger.info('Processing prompt: %s', prompt)
-        
-        # Set CORS headers directly for this endpoint
-        response_headers = {
-            'Access-Control-Allow-Origin': request.headers.get('Origin', 'https://calgentic.com'),
-            'Access-Control-Allow-Credentials': 'true',
-            'Access-Control-Allow-Methods': 'POST, OPTIONS',
-            'Access-Control-Allow-Headers': 'Content-Type, Authorization, Accept',
-            'Access-Control-Expose-Headers': 'Content-Type, Authorization'
-        }
-        
-        response = main.promptToEvent(prompt)
-        
-        if isinstance(response, dict) and 'error' in response:
-            logger.error(f"Error in prompt processing: {response['error']}")
-            return jsonify(response), 400, response_headers
-            
-        response_dict = response
-        if 'action_type' not in response_dict:
-            logger.error("Missing action_type in response")
-            return jsonify({"error": "Invalid response format from AI service"}), 400, response_headers
 
-        if response_dict['action_type'] == 'create':
-            if 'eventParams' not in response_dict or 'eventCompletion' not in response_dict:
+    try:
+        data = request.get_json()
+        logger.info("Received JSON data: %s", data)
+
+        # ── Validate that both "prompt" and "userTimeZone" exist ─────────────────
+        if not data or "prompt" not in data or "userTimeZone" not in data:
+            logger.error("Missing 'prompt' or 'userTimeZone' in request body")
+            return (
+                jsonify({"error": "Request body must include both 'prompt' and 'userTimeZone'."}),
+                400,
+            )
+
+        prompt = data["prompt"]
+        user_tz = data["userTimeZone"]
+        logger.info("Processing prompt: %s", prompt)
+        logger.info("UserTimeZone: %s", user_tz)
+
+        # CORS response headers
+        response_headers = {
+            "Access-Control-Allow-Origin": request.headers.get("Origin", "https://calgentic.com"),
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept",
+            "Access-Control-Expose-Headers": "Content-Type, Authorization",
+        }
+
+        # ── Pass BOTH prompt and user_tz into promptToEvent ───────────────────────
+        ai_response = main.promptToEvent(prompt, user_tz)
+
+        if isinstance(ai_response, dict) and "error" in ai_response:
+            logger.error("Error in prompt processing: %s", ai_response["error"])
+            return jsonify(ai_response), 400, response_headers
+
+        response_dict = ai_response
+        if "action_type" not in response_dict:
+            logger.error("Missing action_type in response")
+            return (
+                jsonify({"error": "Invalid response format from AI service"}),
+                400,
+                response_headers,
+            )
+
+        if response_dict["action_type"] == "create":
+            if "eventParams" not in response_dict or "eventCompletion" not in response_dict:
                 logger.error("Missing eventParams or eventCompletion in create action")
                 return jsonify({"error": "Invalid event creation parameters"}), 400, response_headers
-            eventParams = response_dict['eventParams']
+
+            eventParams = response_dict["eventParams"]
             if isinstance(eventParams, list) and len(eventParams) > 0:
                 event_data = eventParams[0]
+
+                # ── Inject the same user_tz into the event_data dict so formatEvent can pick it up ──
+                event_data["timeZone"] = user_tz
+
                 try:
-                    if main.formatEvent(event_data):
-                        message = response_dict['eventCompletion']
+                    result = main.formatEvent(event_data)
+                    if result and result.get("success", False):
+                        message = response_dict["eventCompletion"]
                         return jsonify({"message": message, "success": True}), 200, response_headers
                     else:
-                        logger.error("Failed to format event")
-                        return jsonify({"error": "Failed to format event data"}), 400, response_headers
+                        logger.error("Failed to format/create event: %s", result)
+                        return jsonify({"error": "Failed to create event"}), 400, response_headers
                 except Exception as e:
-                    logger.error(f"Exception in formatEvent: {str(e)}")
+                    logger.error("Exception in formatEvent: %s", str(e))
                     return jsonify({"error": f"Error processing event: {str(e)}"}), 400, response_headers
             else:
                 logger.error("eventParams is not in the expected format")
                 return jsonify({"error": "Invalid event parameters format"}), 400, response_headers
-        elif response_dict['action_type'] == 'view':
-            if 'query_details' not in response_dict:
+
+        elif response_dict["action_type"] == "view":
+            if "query_details" not in response_dict:
                 logger.error("Missing query_details in view action")
                 return jsonify({"error": "Missing event query parameters"}), 400, response_headers
-            query_details = response_dict['query_details']
+
+            query_details = response_dict["query_details"]
             try:
                 return jsonify(main.findEvent(query_details=query_details)), 200, response_headers
             except Exception as e:
-                logger.error(f"Error in findEvent: {str(e)}")
+                logger.error("Error in findEvent: %s", str(e))
                 return jsonify({"error": f"Error finding events: {str(e)}"}), 400, response_headers
+
         else:
-            logger.error(f"Unknown action_type: {response_dict['action_type']}")
+            logger.error("Unknown action_type: %s", response_dict["action_type"])
             return jsonify({"error": "Unsupported action type"}), 400, response_headers
+
     except Exception as e:
-        logger.error(f"Unexpected error in prompt endpoint: {str(e)}")
-        return jsonify({"error": "An unexpected error occurred. Please try again."}), 500, response_headers
+        logger.error("Unexpected error in prompt endpoint: %s", str(e))
+        return (
+            jsonify({"error": "An unexpected error occurred. Please try again."}),
+            500,
+            response_headers,
+        )
+
 
 @app.route('/api/login')
 def login():
