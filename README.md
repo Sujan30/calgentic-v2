@@ -1,56 +1,39 @@
-# 📆 Calgentic
+# 🧠 Naval Wisdom Bot
 
-Calgentic is your AI-powered calendar assistant that transforms plain English into structured Google Calendar events. Whether you're scheduling meetings, workouts, study sessions, or reminders, Calgentic understands your intent and creates precise, timezone-aware events—automatically.
+Naval Wisdom Bot is a lightweight Twitter automation tool that shares timeless insights from Naval Ravikant — covering wealth, decision-making, happiness, and self-actualization. It's built to deliver short bursts of clarity in an increasingly noisy digital world.
 
 ---
 
 ## ✨ Features
 
-- 🧠 **Natural Language Understanding**  
-  Type “Lunch with Sarah on Friday at 2pm” — we’ll turn it into a real event.
+- 💬 **Automated Wisdom Posting**  
+  Tweets curated quotes from Naval Ravikant at scheduled intervals.
 
-- 🌍 **Timezone-Aware Scheduling**  
-  Automatically adapts to your local timezone.
+- 🧠 **High-Signal Curation**  
+  Pulls from a handpicked collection of Naval’s most profound thoughts (no fluff).
 
-- 📅 **Google Calendar Integration**  
-  Syncs seamlessly with your existing calendar.
+- 🛠️ **Easy-to-Modify JSON Quote Bank**  
+  Add your own quotes or customize the message style.
 
-- 💬 **Real-Time Event Parsing**  
-  Fast, server-side parsing with GPT-backed logic.
-
-- 🔒 **Secure Auth with Supabase**  
-  Fully authenticated user experience, backed by JWT and row-level security.
-
-- 🛠️ **Full Event Management**  
-  Modify, locate, or delete events using natural language like “Reschedule my meeting to 3pm” or “Cancel gym tomorrow.”
-
-- 🧪 **In-Progress Features**  
-  - Event summarization  
-  - Smart suggestions (e.g. travel time, conflicts)  
-  - Voice input support (coming soon)
+- 🐍 **Built with Python**  
+  Clean, modular code using Tweepy for Twitter API interaction.
 
 ---
 
-## 🚀 Getting Started
+## 🛠️ Setup
 
 ### 📦 Requirements
 
 - Python 3.10+
-- Flask
-- Supabase Project
-- Google OAuth client credentials
-- OpenAI API key
+- Tweepy (Twitter API client)
+- `.env` file with Twitter API keys
 
-### 🛠️ Installation
+### 🔧 Environment Setup
 
-```bash
-git clone https://github.com/yourusername/calgentic.git
-#(for frontend)
-cd frontend
-npm install 
-npm dev 
+Create a `.env` file in the root directory:
 
-#(for backend)
-cd backend
-pip install -r requirements.txt
-python app.py
+```env
+API_KEY=your_api_key
+API_KEY_SECRET=your_api_key_secret
+ACCESS_TOKEN=your_access_token
+ACCESS_TOKEN_SECRET=your_access_token_secret
