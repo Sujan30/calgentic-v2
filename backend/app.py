@@ -1315,6 +1315,16 @@ def get_all_prompts():
         logger.error(f"Error getting all prompts: {str(e)}")
         return jsonify({"error": "Failed to retrieve prompts"}), 500
 
+@app.route('/ping')
+def ping():
+    return {
+        'status': 'healthy',
+        'timestamp': datetime.now().isoformat(),
+        'uptime': time.time() - start_time,
+        'status_code ' : 200
+    }
+
+
 if __name__ == '__main__':
     # In production, use a proper WSGI server (e.g., Gunicorn or uWSGI)
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5001)), debug=False)
