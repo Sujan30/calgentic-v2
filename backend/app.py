@@ -17,6 +17,8 @@ from supabase import create_client, Client
 # Load environment variables from .env file
 load_dotenv()
 
+
+start_time = time.time()
 app = Flask(__name__, static_folder='static', static_url_path='')
 
 # Use a strong secret key; load from environment in production
