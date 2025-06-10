@@ -271,9 +271,21 @@ const TosPage = () => {
             </p>
           </div>
 
+          {/* 9. Children’s Privacy */}
+          <div className="mb-8">
+            <h2 className="text-2xl font-semibold mb-3">10. Use of Google User Data for AI/ML Purposes</h2>
+            <p className="text-base text-gray-600 dark:text-gray-300">
+              We do not use any Google user data—whether directly or indirectly—for the development, improvement, or training of artificial intelligence (AI) or machine learning (ML) models. This includes any form of training data, fine-tuning, or algorithmic optimization. All Google user data accessed by our app is used solely for providing and improving core user-facing features, and is handled in accordance with Google’s Limited Use requirements.
+            </p>
+            <p className='text-base text-gray-600 dark:text-gray-300'>
+              We do not use any data obtained through Google Workspace APIs to develop, improve, or train non-personalized artificial intelligence (AI) or machine learning (ML) models. All data accessed via these APIs is strictly used to provide user-requested functionality within the app and in full compliance with Google’s Limited Use Policy.
+              If our application transfers Google user data obtained from Workspace APIs to third-party AI tools, we do so only for user-initiated, personalized functionality. We do not transfer any Google user data for the purpose of training, developing, or improving generalized or non-personalized AI or ML models. The data transferred is limited to what is strictly necessary to perform the specific task requested by the user.
+
+            </p>
+          </div>
           {/* 10. International Data Transfers */}
           <div className="mb-8">
-            <h2 className="text-2xl font-semibold mb-3">10. International Data Transfers</h2>
+            <h2 className="text-2xl font-semibold mb-3">11. International Data Transfers</h2>
             <p className="text-base text-gray-600 dark:text-gray-300 mb-2">
               If you’re visiting Calgentic from outside the United States, please note your data may be transferred to and stored on servers located in the U.S. By using Calgentic, you consent to this transfer.
             </p>
@@ -288,7 +300,7 @@ const TosPage = () => {
 
           {/* 11. Third-Party Links & Embedded Content */}
           <div className="mb-8">
-            <h2 className="text-2xl font-semibold mb-3">11. Third-Party Links &amp; Embedded Content</h2>
+            <h2 className="text-2xl font-semibold mb-3">12. Third-Party Links &amp; Embedded Content</h2>
             <p className="text-base text-gray-600 dark:text-gray-300">
               Calgentic may include links or embed content from third parties (e.g., YouTube videos, social media widgets). We are not responsible for how those third parties collect or use your data. Please review their separate privacy policies before interacting with their content.
             </p>
@@ -296,7 +308,7 @@ const TosPage = () => {
 
           {/* 12. Changes to This Privacy Policy */}
           <div className="mb-8">
-            <h2 className="text-2xl font-semibold mb-3">12. Changes to This Privacy Policy</h2>
+            <h2 className="text-2xl font-semibold mb-3">13. Changes to This Privacy Policy</h2>
             <p className="text-base text-gray-600 dark:text-gray-300 mb-2">
               We may update this policy from time to time. If we make material changes affecting your rights or the way we use personal data, we’ll:
             </p>
@@ -311,7 +323,7 @@ const TosPage = () => {
 
           {/* 13. Contact Us */}
           <div className="mb-12">
-            <h2 className="text-2xl font-semibold mb-3">13. Contact Us</h2>
+            <h2 className="text-2xl font-semibold mb-3">14. Contact Us</h2>
             <p className="text-base text-gray-600 dark:text-gray-300 mb-2">
               If you have any questions, concerns, or requests regarding this Privacy Policy—or if you want to delete your data—please reach out to:
             </p>
