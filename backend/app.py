@@ -329,9 +329,14 @@ def onboard():
             return jsonify({"error": error_msg}), 400, response_headers
 
         prompt = data["prompt"]
+        user_tz = data["userTimeZone"]
+
+        # Send plain prompt to AI
+        ai_response = main.promptToEvent(prompt, user_tz)
+
+        # Encrypt only for storage
         encryptor = PromptEncryptor()
         encrypted_prompt = encryptor.encrypt(prompt)
-        user_tz = data["userTimeZone"]
 
         # Create initial prompt log entry only if user is authenticated
         if should_log:
@@ -352,7 +357,6 @@ def onboard():
             prompt_log_id = None
 
         # ── Pass BOTH prompt and user_tz into promptToEvent ───────────────────────
-        ai_response = main.promptToEvent(prompt, user_tz)
         processing_time_ms = int((time.time() - start_time) * 1000)
 
         # Determine status and error message
