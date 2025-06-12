@@ -313,10 +313,11 @@ def onboard():
             # Log failed request only if user is authenticated
             if should_log:
                 try:
+                    encryptor = PromptEncryptor()
                     create_prompt_log(
                         user_email=user_email,
                         user_id=user_id,
-                        prompt_text=data.get("prompt", "") if data else "",
+                        prompt_text=encryptor.encrypt(data.get("prompt", "") if data else ""),
                         status='error',
                         error_message=error_msg,
                         user_timezone=data.get("userTimeZone") if data else None,
