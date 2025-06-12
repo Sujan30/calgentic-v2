@@ -1,14 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Header from '@/components/Header';
 import CommandBar from '@/components/CommandBar';
-import { Calendar, Clock, ArrowRight, CalendarDays, ListTodo, Settings, LogOut } from 'lucide-react';
+import { Calendar, Clock, ArrowRight, CalendarDays, ListTodo, Settings, LogOut, Link } from 'lucide-react';
 import { sendPrompt, CalendarResponse } from '@/lib/api';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 import Footer from '@/components/Footer';
+import { ThemeToggle } from '@/components/ThemeToggle';
 
 // Environment variables
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:5001';
@@ -28,6 +29,8 @@ const Dashboard = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
   const navigate = useNavigate();
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const dropdownRef = useRef(null);
 
   // Check authentication status
   const checkAuth = async (): Promise<boolean> => {
@@ -149,6 +152,17 @@ const Dashboard = () => {
     }
   }, [isAuthenticated, authLoading, navigate]);
 
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
   const handlePromptSubmit = async (prompt: string) => {
     if (!prompt.trim()) return;
     
@@ -253,38 +267,48 @@ const Dashboard = () => {
       <header className="fixed top-0 left-0 right-0 z-50 bg-white dark:bg-black border-b border-gray-200 dark:border-gray-800">
         <div className="container flex items-center justify-between h-16 px-4 mx-auto">
           <div className="flex items-center gap-2">
-            <Calendar className="w-6 h-6 text-primary" />
-            <span className="text-xl font-bold text-gray-900 dark:text-white">CalGentic</span>
+            <Link to="/" className="flex items-center gap-2 cursor-pointer">
+              <Calendar className="w-6 h-6 text-primary" />
+              <span className="text-xl font-bold text-gray-900 dark:text-white">CalGentic</span>
+            </Link>
           </div>
           
           <div className="flex items-center gap-4">
             {user && (
-              <div className="flex items-center gap-2">
-                {user.picture ? (
-                  <img 
-                    src={user.picture} 
-                    alt={user.name} 
-                    className="h-8 w-8 rounded-full"
-                  />
-                ) : (
-                  <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
-                    <span className="text-sm font-medium text-primary">
-                      {user.name?.charAt(0) || 'U'}
-                    </span>
+              <div className="relative" ref={dropdownRef}>
+                <button
+                  className="flex items-center gap-2 focus:outline-none"
+                  onClick={() => setDropdownOpen((open) => !open)}
+                >
+                  {user.picture ? (
+                    <img
+                      src={user.picture}
+                      alt={user.name}
+                      className="h-8 w-8 rounded-full"
+                    />
+                  ) : (
+                    <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
+                      <span className="text-sm font-medium text-primary">
+                        {user.name?.charAt(0) || "U"}
+                      </span>
+                    </div>
+                  )}
+                  <span className="text-sm text-gray-700 dark:text-gray-300">{user.name}</span>
+                </button>
+                {dropdownOpen && (
+                  <div className="absolute right-0 mt-2 w-40 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded shadow-lg z-50">
+                    <button
+                      onClick={logout}
+                      className="w-full flex items-center gap-2 px-4 py-2 text-sm text-gray-900 dark:text-white hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-primary dark:hover:text-primary transition"
+                    >
+                      <LogOut className="h-4 w-4" />
+                      Logout
+                    </button>
                   </div>
                 )}
-                <span className="text-sm text-gray-700 dark:text-gray-300">{user.name}</span>
-                <Button 
-                  variant="ghost" 
-                  size="sm" 
-                  onClick={logout}
-                  className="gap-2"
-                >
-                  <LogOut className="h-4 w-4" />
-                  Logout
-                </Button>
               </div>
             )}
+            <ThemeToggle />
           </div>
         </div>
       </header>
@@ -346,7 +370,7 @@ const Dashboard = () => {
                     </span>
                     <span className="glass px-3 py-1 cursor-pointer hover:bg-white/20 dark:hover:bg-black/40 transition"
                       onClick={() => handlePromptSubmit("Find a free time slot next week for lunch")}>
-                      "Find free time for lunch next week"
+                      "Create a meeting with sujan for next monday at 10am"
                     </span>
                   </div>
                 )}
