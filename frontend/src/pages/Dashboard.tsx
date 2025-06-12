@@ -336,10 +336,6 @@ const Dashboard = () => {
                 <Calendar className="h-4 w-4" />
                 <span>Calendar Assistant</span>
               </TabsTrigger>
-              <TabsTrigger value="upcoming" className="flex items-center gap-2">
-                <ListTodo className="h-4 w-4" />
-                <span>Upcoming Events</span>
-              </TabsTrigger>
               <TabsTrigger value="settings" className="flex items-center gap-2">
                 <Settings className="h-4 w-4" />
                 <span>Settings</span>
@@ -362,7 +358,7 @@ const Dashboard = () => {
                   <div className="flex flex-wrap justify-center gap-4 mt-6 text-sm text-gray-500 dark:text-gray-300">
                     <span className="glass px-3 py-1 cursor-pointer hover:bg-white/20 dark:hover:bg-black/40 transition"
                       onClick={() => handlePromptSubmit("What events do I have this week?")}>
-                      "What events do I have this week?"
+                      "What events do I have today?"
                     </span>
                     <span className="glass px-3 py-1 cursor-pointer hover:bg-white/20 dark:hover:bg-black/40 transition"
                       onClick={() => handlePromptSubmit("Schedule a team meeting tomorrow at 10am")}>
