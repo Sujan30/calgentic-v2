@@ -314,7 +314,7 @@ const Dashboard = () => {
       </header>
       
       <main className="pt-32 section-padding pb-20">
-        <div className="max-w-7xl mx-auto animate-fade-up">
+        <div className="max-w-4xl mx-auto animate-fade-up">
           {/* Welcome Section */}
           <div className="mb-8 text-center">
             <div className="inline-flex items-center justify-center p-2 mb-6 rounded-full bg-primary/10 text-primary">
@@ -331,7 +331,7 @@ const Dashboard = () => {
           </div>
 
           <Tabs defaultValue="command" className="w-full">
-            <TabsList className="mb-6 glass dark:bg-black/30">
+            <TabsList className="mb-6 glass dark:bg-black/30 w-full">
               <TabsTrigger value="command" className="flex items-center gap-2 data-[state=active]:bg-white dark:data-[state=active]:bg-black">
                 <Calendar className="h-4 w-4" />
                 <span>Calendar Assistant</span>
