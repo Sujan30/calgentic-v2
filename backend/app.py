@@ -30,7 +30,6 @@ SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
 
 if not SUPABASE_URL or not SUPABASE_ANON_KEY:
     logger = logging.getLogger(__name__)
-    logger.warning("Supabase credentials not found. User data will not be persisted.")
     supabase: Client = None
 else:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
@@ -95,7 +94,6 @@ logger = logging.getLogger(__name__)
 def create_or_update_user(email, name, google_id=None, picture=None):
     """Create or update user in Supabase database"""
     if not supabase:
-        logger.warning("Supabase not configured. Skipping user database operation.")
         return None
     
     try:
@@ -117,18 +115,15 @@ def create_or_update_user(email, name, google_id=None, picture=None):
             # Update existing user
             user_id = existing_user.data[0]['id']
             result = supabase.table('users').update(user_data).eq('id', user_id).execute()
-            logger.info(f"Updated user: {email}")
             return result.data[0] if result.data else None
         else:
             # Create new user
             user_data['id'] = str(uuid.uuid4())
             user_data['created_at'] = datetime.now(UTC).isoformat()
             result = supabase.table('users').insert(user_data).execute()
-            logger.info(f"Created new user: {email}")
             return result.data[0] if result.data else None
             
     except Exception as e:
-        logger.error(f"Error in create_or_update_user: {str(e)}")
         return None
 
 def get_user_by_email(email):
@@ -140,7 +135,6 @@ def get_user_by_email(email):
         result = supabase.table('users').select('*').eq('email', email).execute()
         return result.data[0] if result.data else None
     except Exception as e:
-        logger.error(f"Error getting user by email: {str(e)}")
         return None
 
 def get_user_by_id(user_id):
@@ -152,7 +146,6 @@ def get_user_by_id(user_id):
         result = supabase.table('users').select('*').eq('id', user_id).execute()
         return result.data[0] if result.data else None
     except Exception as e:
-        logger.error(f"Error getting user by ID: {str(e)}")
         return None
 
 # Prompt Database Operations
@@ -162,7 +155,6 @@ def create_prompt_log(user_email, user_id, prompt_text, ai_response=None, action
                      event_data=None, ip_address=None, user_agent=None):
     """Create a new prompt log entry in Supabase database"""
     if not supabase:
-        logger.warning("Supabase not configured. Skipping prompt logging.")
         return None
     
     try:
@@ -186,11 +178,9 @@ def create_prompt_log(user_email, user_id, prompt_text, ai_response=None, action
         }
         
         result = supabase.table('prompts').insert(prompt_data).execute()
-        logger.info(f"Created prompt log for user: {user_email}")
         return result.data[0] if result.data else None
         
     except Exception as e:
-        logger.error(f"Error creating prompt log: {str(e)}")
         return None
 
 def update_prompt_log(prompt_id, ai_response=None, status='success', error_message=None, 
@@ -221,11 +211,9 @@ def update_prompt_log(prompt_id, ai_response=None, status='success', error_messa
             update_data['event_data'] = event_data
             
         result = supabase.table('prompts').update(update_data).eq('id', prompt_id).execute()
-        logger.info(f"Updated prompt log: {prompt_id}")
         return result.data[0] if result.data else None
         
     except Exception as e:
-        logger.error(f"Error updating prompt log: {str(e)}")
         return None
 
 def get_user_prompts(user_email, limit=50, offset=0):
@@ -237,7 +225,6 @@ def get_user_prompts(user_email, limit=50, offset=0):
         result = supabase.table('prompts').select('*').eq('user_email', user_email).order('created_at', desc=True).limit(limit).offset(offset).execute()
         return result.data
     except Exception as e:
-        logger.error(f"Error getting user prompts: {str(e)}")
         return []
 
 # Load Google OAuth credentials from environment variables
@@ -245,8 +232,7 @@ GOOGLE_CLIENT_ID = os.getenv("google_client_id")
 GOOGLE_CLIENT_SECRET = os.getenv("google_client_secret")
 redirect_url = os.getenv('redirect_url', 'http://localhost:5001/auth/callback')
 
-logger.info(f"FRONTEND_URL set to: {frontend_url}")
-logger.info(f"REDIRECT_URL set to: {redirect_url}")
+
 
 if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
     raise Exception("Google OAuth credentials not set. Check your environment variables.")
@@ -255,17 +241,6 @@ client_secret_file = os.getenv('credentials_path')
 if not os.path.exists(client_secret_file):
     raise FileNotFoundError(f"Credentials file not found at: {client_secret_file}")
 
-@app.before_request
-def log_request_info():
-    # Debug logging only; sensitive details should not be logged in production.
-    logger.info('Request Method: %s', request.method)
-    logger.info('Request URL: %s', request.url)
-    logger.info('Request Headers: %s', dict(request.headers))
-    logger.info('Request Body: %s', request.get_data())
-    logger.info('Session: %s', session)
-    logger.info('Cookies: %s', request.cookies)
-    logger.info('Origin: %s', request.headers.get('Origin'))
-    logger.info('Host: %s', request.headers.get('Host'))
 
 @app.route('/')
 def index():
@@ -273,11 +248,10 @@ def index():
 
 @app.route("/prompt", methods=["POST", "OPTIONS"])
 def onboard():
-    logger.info("Received request to /prompt endpoint")
+
 
     # Handle OPTIONS preflight
     if request.method == "OPTIONS":
-        logger.info("Handling OPTIONS request")
         response = app.make_default_options_response()
         origin = request.headers.get("Origin", "")
         allowed_origins = [
@@ -315,7 +289,6 @@ def onboard():
 
     try:
         data = request.get_json()
-        logger.info("Received JSON data: %s", data)
 
         # Get user information from session
         user_session = session.get("user")
@@ -328,7 +301,6 @@ def onboard():
         # ── Validate that both "prompt" and "userTimeZone" exist ─────────────────
         if not data or "prompt" not in data or "userTimeZone" not in data:
             error_msg = "Request body must include both 'prompt' and 'userTimeZone'."
-            logger.error(error_msg)
             
             # Log failed request only if user is authenticated
             if should_log:
@@ -344,14 +316,12 @@ def onboard():
                         user_agent=request.headers.get('User-Agent', '')
                     )
                 except Exception as log_error:
-                    logger.error(f"Failed to log prompt error: {log_error}")
+                    print(f'error {e}')
             
             return jsonify({"error": error_msg}), 400, response_headers
 
         prompt = data["prompt"]
         user_tz = data["userTimeZone"]
-        logger.info("Processing prompt: %s", prompt)
-        logger.info("UserTimeZone: %s", user_tz)
 
         # Create initial prompt log entry only if user is authenticated
         if should_log:
@@ -367,7 +337,6 @@ def onboard():
                 )
                 prompt_log_id = prompt_log.get('id') if prompt_log else None
             except Exception as log_error:
-                logger.error(f"Failed to create initial prompt log: {log_error}")
                 prompt_log_id = None
         else:
             prompt_log_id = None
@@ -377,20 +346,17 @@ def onboard():
 
         if isinstance(ai_response, dict) and "error" in ai_response:
             processing_time_ms = int((time.time() - start_time) * 1000)
-            logger.error("Error in prompt processing: %s", ai_response["error"])
             
             # Update prompt log with error
             if prompt_log_id:
-                try:
-                    update_prompt_log(
+                update_prompt_log(
                         prompt_id=prompt_log_id,
                         ai_response=ai_response,
                         status='error',
                         error_message=ai_response.get("error"),
                         processing_time_ms=processing_time_ms
                     )
-                except Exception as log_error:
-                    logger.error(f"Failed to update prompt log: {log_error}")
+                    
             
             return jsonify(ai_response), 400, response_headers
 
@@ -398,11 +364,10 @@ def onboard():
         if "action_type" not in response_dict:
             processing_time_ms = int((time.time() - start_time) * 1000)
             error_msg = "Invalid response format from AI service"
-            logger.error(error_msg)
+            
             
             # Update prompt log with error
             if prompt_log_id:
-                try:
                     update_prompt_log(
                         prompt_id=prompt_log_id,
                         ai_response=response_dict,
@@ -410,8 +375,7 @@ def onboard():
                         error_message=error_msg,
                         processing_time_ms=processing_time_ms
                     )
-                except Exception as log_error:
-                    logger.error(f"Failed to update prompt log: {log_error}")
+                
             
             return jsonify({"error": error_msg}), 400, response_headers
 
@@ -423,19 +387,17 @@ def onboard():
             if "eventParams" not in response_dict or "eventCompletion" not in response_dict:
                 processing_time_ms = int((time.time() - start_time) * 1000)
                 error_msg = "Invalid event creation parameters"
-                logger.error(error_msg)
                 
                 if prompt_log_id:
-                    try:
-                        update_prompt_log(
+                    
+                    update_prompt_log(
                             prompt_id=prompt_log_id,
                             ai_response=response_dict,
                             status='error',
                             error_message=error_msg,
                             processing_time_ms=processing_time_ms
                         )
-                    except Exception as log_error:
-                        logger.error(f"Failed to update prompt log: {log_error}")
+                    
                 
                 return jsonify({"error": error_msg}), 400, response_headers
 
@@ -465,12 +427,11 @@ def onboard():
                                     action_type=action_type
                                 )
                             except Exception as log_error:
-                                logger.error(f"Failed to update prompt log: {log_error}")
+                                pass
                         
                         return jsonify({"message": message, "success": True}), 200, response_headers
                     else:
                         error_msg = f"Failed to create event: {result}"
-                        logger.error(error_msg)
                         
                         if prompt_log_id:
                             try:
@@ -484,14 +445,13 @@ def onboard():
                                     action_type=action_type
                                 )
                             except Exception as log_error:
-                                logger.error(f"Failed to update prompt log: {log_error}")
+                                pass
                         
                         return jsonify({"error": "Failed to create event"}), 400, response_headers
                         
                 except Exception as e:
                     processing_time_ms = int((time.time() - start_time) * 1000)
                     error_msg = f"Error processing event: {str(e)}"
-                    logger.error("Exception in formatEvent: %s", str(e))
                     
                     if prompt_log_id:
                         try:
@@ -505,13 +465,12 @@ def onboard():
                                 action_type=action_type
                             )
                         except Exception as log_error:
-                            logger.error(f"Failed to update prompt log: {log_error}")
+                            pass
                     
                     return jsonify({"error": error_msg}), 400, response_headers
             else:
                 processing_time_ms = int((time.time() - start_time) * 1000)
                 error_msg = "Invalid event parameters format"
-                logger.error(error_msg)
                 
                 if prompt_log_id:
                     try:
@@ -524,7 +483,7 @@ def onboard():
                             action_type=action_type
                         )
                     except Exception as log_error:
-                        logger.error(f"Failed to update prompt log: {log_error}")
+                        pass
                 
                 return jsonify({"error": error_msg}), 400, response_headers
 
@@ -532,7 +491,6 @@ def onboard():
             if "query_details" not in response_dict:
                 processing_time_ms = int((time.time() - start_time) * 1000)
                 error_msg = "Missing event query parameters"
-                logger.error(error_msg)
                 
                 if prompt_log_id:
                     try:
@@ -545,7 +503,7 @@ def onboard():
                             action_type=action_type
                         )
                     except Exception as log_error:
-                        logger.error(f"Failed to update prompt log: {log_error}")
+                        pass
                 
                 return jsonify({"error": error_msg}), 400, response_headers
 
@@ -567,14 +525,13 @@ def onboard():
                             event_data=query_details
                         )
                     except Exception as log_error:
-                        logger.error(f"Failed to update prompt log: {log_error}")
+                        pass
                 
                 return jsonify(view_result), 200, response_headers
                 
             except Exception as e:
                 processing_time_ms = int((time.time() - start_time) * 1000)
                 error_msg = f"Error finding events: {str(e)}"
-                logger.error(error_msg)
                 
                 if prompt_log_id:
                     try:
@@ -587,14 +544,13 @@ def onboard():
                             action_type=action_type
                         )
                     except Exception as log_error:
-                        logger.error(f"Failed to update prompt log: {log_error}")
+                        pass
                 
                 return jsonify({"error": error_msg}), 400, response_headers
 
         else:
             processing_time_ms = int((time.time() - start_time) * 1000)
             error_msg = f"Unsupported action type: {action_type}"
-            logger.error(error_msg)
             
             if prompt_log_id:
                 try:
@@ -607,14 +563,13 @@ def onboard():
                         action_type=action_type
                     )
                 except Exception as log_error:
-                    logger.error(f"Failed to update prompt log: {log_error}")
+                    pass
             
             return jsonify({"error": "Unsupported action type"}), 400, response_headers
 
     except Exception as e:
         processing_time_ms = int((time.time() - start_time) * 1000)
         error_msg = f"An unexpected error occurred: {str(e)}"
-        logger.error("Unexpected error in prompt endpoint: %s", str(e))
         
         if prompt_log_id:
             try:
@@ -625,7 +580,7 @@ def onboard():
                     processing_time_ms=processing_time_ms
                 )
             except Exception as log_error:
-                logger.error(f"Failed to update prompt log: {log_error}")
+                pass
         
         return jsonify({"error": "An unexpected error occurred. Please try again."}), 500, response_headers
 
@@ -654,7 +609,6 @@ def login():
         )
         
         flow.redirect_uri = redirect_url
-        logger.info(f"Redirect URI set to: {flow.redirect_uri}")
 
         authorization_url, state = flow.authorization_url(
             access_type='offline',
@@ -662,43 +616,26 @@ def login():
             prompt='consent'  # Force consent screen to ensure we get refresh token
         )
         session['state'] = state
-        logger.info(f"Authorization URL: {authorization_url}")
 
         return redirect(authorization_url)
     except Exception as e:
-        logger.error(f"Error in login route: {str(e)}")
         return jsonify({'error': 'Authentication failed', 'message': str(e)}), 500
 
 @app.route('/auth/callback')
 def auth_callback():
     try:
-        logger.info("=== AUTH CALLBACK STARTED ===")
-        logger.info(f"Request args: {dict(request.args)}")
-        logger.info(f"Request headers: {dict(request.headers)}")
         
         code = request.args.get('code')
         if not code:
-            logger.error("No code in request")
             return redirect(f"{frontend_url}/login?error=no_code")
-
-        logger.info(f"OAuth code received: {code[:20]}...")
 
         token_url = "https://oauth2.googleapis.com/token"
         client_id = os.getenv('google_client_id')
         client_secret = os.getenv('google_client_secret')
         redirect_uri = os.getenv('redirect_url', 'http://localhost:5001/auth/callback')
-
-        logger.info(f"Using client_id: {client_id}")
-        logger.info(f"Using redirect_uri: {redirect_uri}")
         
         if not client_id or not client_secret:
-            logger.error("Missing OAuth credentials!")
             return redirect(f"{frontend_url}/login?error=missing_credentials")
-
-        logger.info(
-            f"Exchanging code for tokens with data: {{'code': '{code[:20]}...', 'client_id': '{client_id}', "
-            f"'client_secret': '***', 'redirect_uri': '{redirect_uri}', 'grant_type': 'authorization_code'}}"
-        )
 
         token_data = {
             'code': code,
@@ -708,28 +645,19 @@ def auth_callback():
             'grant_type': 'authorization_code'
         }
 
-        logger.info("Making token exchange request...")
         token_response = requests.post(token_url, data=token_data)
-        logger.info(f"Token response status: {token_response.status_code}")
-        logger.info(f"Token response headers: {dict(token_response.headers)}")
         
         if not token_response.ok:
-            logger.error(f"Token exchange failed: {token_response.status_code} - {token_response.text}")
             return redirect(f"{frontend_url}/login?error=token_exchange_failed")
 
         tokens = token_response.json()
-        logger.info("Received tokens: %s", {k: v if k not in ['id_token', 'access_token'] else v[:10] + '...' for k, v in tokens.items()})
 
         id_token = tokens.get('id_token')
         if not id_token:
-            logger.error("No ID token received")
             return redirect(f"{frontend_url}/login?error=no_id_token")
 
-        logger.info("Decoding ID token...")
         # Decode the ID token without verifying signature
         user_data = jwt.decode(id_token, options={"verify_signature": False})
-        logger.info("User authenticated: %s", user_data.get('email'))
-        logger.info("User data keys: %s", list(user_data.keys()))
 
         # Save or update user in Supabase database
         user_email = user_data.get('email')
@@ -744,7 +672,6 @@ def auth_callback():
             picture=picture
         )
         
-        logger.info("Setting session data...")
         # Set session data
         session.permanent = True
         
@@ -770,26 +697,16 @@ def auth_callback():
             'id_token': tokens.get('id_token'),
             'expires_at': time.time() + tokens.get('expires_in', 3600)
         }
-
-        # Log session data for debugging
-        logger.info(f"Authentication successful for user: {user_email}")
-        logger.info(f"Session data set: {dict(session)}")
         
         # Ensure session is saved before redirect
         session.modified = True
-        logger.info("Session marked as modified")
         
         # Redirect directly to dashboard instead of frontend auth callback
         redirect_url_final = f"{frontend_url}/dashboard"
-        logger.info(f"Redirecting directly to dashboard: {redirect_url_final}")
-        logger.info("=== AUTH CALLBACK COMPLETED ===")
         return redirect(redirect_url_final)
 
     except Exception as e:
-        logger.error(f"Error in callback: {str(e)}")
-        logger.error(f"Exception type: {type(e)}")
         import traceback
-        logger.error(f"Traceback: {traceback.format_exc()}")
         return redirect(f"{frontend_url}/login?error=exception")
 
 @app.route("/auth/user")
@@ -814,7 +731,6 @@ def test_session():
             'timestamp': datetime.now(UTC).isoformat()
         }
         session.modified = True
-        logger.info(f"Test session set: {dict(session)}")
         return jsonify({
             'success': True,
             'message': 'Test session created',
@@ -822,7 +738,6 @@ def test_session():
         })
     else:
         # Check if test session exists
-        logger.info(f"Checking test session: {dict(session)}")
         return jsonify({
             'session_exists': 'test_user' in session,
             'session_data': dict(session),
@@ -833,15 +748,8 @@ def test_session():
 
 @app.route('/api/check-auth')
 def check_auth():
-    logger.info(f"Check auth request received from: {request.remote_addr}")
-    logger.info(f"Request headers: {dict(request.headers)}")
-    logger.info(f"All cookies received: {dict(request.cookies)}")
-    logger.info(f"Session cookie name: {app.config['SESSION_COOKIE_NAME']}")
-    logger.info(f"Session contents: {dict(session)}")
-
     # Check if we have any session data
     if not session:
-        logger.info("No session data found")
         return jsonify({
             'authenticated': False,
             'message': 'No session found',
@@ -855,7 +763,6 @@ def check_auth():
 
     # Check if user is in session
     if 'user' not in session:
-        logger.info("No user in session")
         return jsonify({
             'authenticated': False,
             'message': 'No user session found',
@@ -870,7 +777,6 @@ def check_auth():
 
     # Check if tokens exist and are valid
     if 'tokens' not in session:
-        logger.info("No tokens in session")
         return jsonify({
             'authenticated': False,
             'message': 'No tokens found',
@@ -885,7 +791,6 @@ def check_auth():
 
     tokens = session['tokens']
     if time.time() > tokens.get('expires_at', 0):
-        logger.info("Tokens expired")
         return jsonify({
             'authenticated': False,
             'message': 'Authentication expired',
@@ -901,7 +806,6 @@ def check_auth():
         })
 
     user_email = session['user'].get('email')
-    logger.info(f"User authenticated successfully: {user_email}")
     return jsonify({
         'authenticated': True,
         'user': session['user'],
@@ -919,8 +823,6 @@ def check_auth():
 def api_logout():
     try:
         user_email = session.get('user', {}).get('email')
-        if user_email:
-            logger.info("Logging out user: %s", user_email)
         session.clear()
         response = jsonify({
             "success": True,
@@ -929,7 +831,6 @@ def api_logout():
         response.headers['Content-Type'] = 'application/json'
         return response
     except Exception as e:
-        logger.error(f"Error during logout: {str(e)}")
         response = jsonify({
             "success": False,
             "error": str(e)
@@ -951,10 +852,6 @@ def after_request(response):
         "https://www.calgentic.com",
         "https://calgentic.onrender.com",
     ]
-    
-    # Log response details
-    logger.info('Response Status: %s', response.status)
-    logger.info('Response Headers: %s', dict(response.headers))
     
     if origin in allowed_origins:
         response.headers['Access-Control-Allow-Origin'] = origin
@@ -1004,7 +901,6 @@ def generate_new_token(refresh_token):
         tokens = response.json()
         return tokens.get('access_token')
     except Exception as e:
-        logger.error(f"Error refreshing token: {str(e)}")
         raise
 
 @app.route('/refresh-token', methods=['POST'])
@@ -1071,7 +967,6 @@ def test_auth():
     }
     
     session.modified = True
-    logger.info(f"Test auth session created: {dict(session)}")
     
     return jsonify({
         'success': True,
@@ -1156,7 +1051,6 @@ def update_user_profile():
             return jsonify({"error": "Failed to update profile"}), 500
             
     except Exception as e:
-        logger.error(f"Error updating user profile: {str(e)}")
         return jsonify({"error": "Failed to update profile"}), 500
 
 @app.route('/api/users', methods=['GET'])
@@ -1173,7 +1067,6 @@ def list_users():
             'count': len(result.data)
         })
     except Exception as e:
-        logger.error(f"Error listing users: {str(e)}")
         return jsonify({"error": "Failed to list users"}), 500
 
 @app.route('/api/prompts', methods=['GET'])
@@ -1210,7 +1103,6 @@ def get_user_prompt_history():
             }
         })
     except Exception as e:
-        logger.error(f"Error getting user prompts: {str(e)}")
         return jsonify({"error": "Failed to retrieve prompt history"}), 500
 
 @app.route('/api/prompts/<prompt_id>', methods=['GET'])
@@ -1235,7 +1127,6 @@ def get_prompt_details(prompt_id):
             'prompt': result.data[0]
         })
     except Exception as e:
-        logger.error(f"Error getting prompt details: {str(e)}")
         return jsonify({"error": "Failed to retrieve prompt details"}), 500
 
 @app.route('/api/prompts/stats', methods=['GET'])
@@ -1281,7 +1172,6 @@ def get_user_prompt_stats():
             'recent_activity': recent_prompts.data
         })
     except Exception as e:
-        logger.error(f"Error getting prompt stats: {str(e)}")
         return jsonify({"error": "Failed to retrieve statistics"}), 500
 
 @app.route('/api/admin/prompts', methods=['GET'])
@@ -1314,7 +1204,6 @@ def get_all_prompts():
             }
         })
     except Exception as e:
-        logger.error(f"Error getting all prompts: {str(e)}")
         return jsonify({"error": "Failed to retrieve prompts"}), 500
 
 @app.route('/ping')
@@ -1328,5 +1217,4 @@ def ping():
 
 
 if __name__ == '__main__':
-    # In production, use a proper WSGI server (e.g., Gunicorn or uWSGI)
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5001)), debug=False)
