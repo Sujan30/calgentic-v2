@@ -2,6 +2,9 @@
 Flask==3.0.2
 flask-cors==4.0.0
 
+#cryptography
+cryptography==45.0.4
+
 # Google API
 google-auth-oauthlib==1.2.0
 google-auth-httplib2==0.2.0
