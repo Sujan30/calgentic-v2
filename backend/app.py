@@ -347,30 +347,35 @@ def onboard():
 
         # ── Pass BOTH prompt and user_tz into promptToEvent ───────────────────────
         ai_response = main.promptToEvent(prompt, user_tz)
+        processing_time_ms = int((time.time() - start_time) * 1000)
 
+        # Determine status and error message
         if isinstance(ai_response, dict) and "error" in ai_response:
-            processing_time_ms = int((time.time() - start_time) * 1000)
-            
-            # Update prompt log with error
-            if prompt_log_id:
+            status = "error"
+            error_message = ai_response.get("error")
+        else:
+            status = "success"
+            error_message = None
+
+        # Update prompt log with final status, response, and processing time
+        if prompt_log_id:
+            try:
                 update_prompt_log(
-                        prompt_id=prompt_log_id,
-                        ai_response=ai_response,
-                        status='error',
-                        error_message=ai_response.get("error"),
-                        processing_time_ms=processing_time_ms
-                    )
-                    
-            
-            return jsonify(ai_response), 400, response_headers
+                    prompt_id=prompt_log_id,
+                    ai_response=ai_response,
+                    status=status,
+                    error_message=error_message,
+                    processing_time_ms=processing_time_ms,
+                    action_type=ai_response.get("action_type") if isinstance(ai_response, dict) else None,
+                    event_data=ai_response.get("eventParams") if isinstance(ai_response, dict) else None
+                )
+            except Exception as log_error:
+                pass
 
         response_dict = ai_response
         if "action_type" not in response_dict:
-            processing_time_ms = int((time.time() - start_time) * 1000)
             error_msg = "Invalid response format from AI service"
             
-            
-            # Update prompt log with error
             if prompt_log_id:
                     update_prompt_log(
                         prompt_id=prompt_log_id,
@@ -389,7 +394,6 @@ def onboard():
 
         if action_type == "create":
             if "eventParams" not in response_dict or "eventCompletion" not in response_dict:
-                processing_time_ms = int((time.time() - start_time) * 1000)
                 error_msg = "Invalid event creation parameters"
                 
                 if prompt_log_id:
@@ -493,7 +497,6 @@ def onboard():
 
         elif action_type == "view":
             if "query_details" not in response_dict:
-                processing_time_ms = int((time.time() - start_time) * 1000)
                 error_msg = "Missing event query parameters"
                 
                 if prompt_log_id:
@@ -553,7 +556,6 @@ def onboard():
                 return jsonify({"error": error_msg}), 400, response_headers
 
         else:
-            processing_time_ms = int((time.time() - start_time) * 1000)
             error_msg = f"Unsupported action type: {action_type}"
             
             if prompt_log_id:
