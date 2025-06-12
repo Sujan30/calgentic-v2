@@ -332,15 +332,15 @@ const Dashboard = () => {
 
           <Tabs defaultValue="command" className="w-full">
             <TabsList className="mb-6 glass dark:bg-black/30 w-full">
-              <TabsTrigger value="command" className="flex items-center gap-2 data-[state=active]:bg-white dark:data-[state=active]:bg-black">
+              <TabsTrigger value="command" className="flex items-center gap-2">
                 <Calendar className="h-4 w-4" />
                 <span>Calendar Assistant</span>
               </TabsTrigger>
-              <TabsTrigger value="upcoming" className="flex items-center gap-2 data-[state=active]:bg-white dark:data-[state=active]:bg-black">
+              <TabsTrigger value="upcoming" className="flex items-center gap-2">
                 <ListTodo className="h-4 w-4" />
                 <span>Upcoming Events</span>
               </TabsTrigger>
-              <TabsTrigger value="settings" className="flex items-center gap-2 data-[state=active]:bg-white dark:data-[state=active]:bg-black">
+              <TabsTrigger value="settings" className="flex items-center gap-2">
                 <Settings className="h-4 w-4" />
                 <span>Settings</span>
               </TabsTrigger>
