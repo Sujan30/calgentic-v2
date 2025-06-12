@@ -225,6 +225,12 @@ def get_user_prompts(user_email, limit=50, offset=0):
         
     try:
         result = supabase.table('prompts').select('*').eq('user_email', user_email).order('created_at', desc=True).limit(limit).offset(offset).execute()
+        encryptor = PromptEncryptor()
+        for prompt in result.data:
+            try:
+                prompt['prompt_text'] = encryptor.decrypt(prompt['prompt_text'])
+            except Exception:
+                prompt['prompt_text'] = '[decryption failed]'
         return result.data
     except Exception as e:
         return []
@@ -1128,9 +1134,15 @@ def get_prompt_details(prompt_id):
         if not result.data:
             return jsonify({"error": "Prompt not found"}), 404
         
+        encryptor = PromptEncryptor()
+        prompt = result.data[0]
+        try:
+            prompt['prompt_text'] = encryptor.decrypt(prompt['prompt_text'])
+        except Exception:
+            prompt['prompt_text'] = '[decryption failed]'
         return jsonify({
             'success': True,
-            'prompt': result.data[0]
+            'prompt': prompt
         })
     except Exception as e:
         return jsonify({"error": "Failed to retrieve prompt details"}), 500
