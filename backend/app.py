@@ -6,13 +6,15 @@ from flask import Flask, send_from_directory, jsonify, request, redirect, sessio
 from flask_session import Session
 from google_auth_oauthlib.flow import InstalledAppFlow
 from flask_cors import CORS
-from datetime import timedelta, datetime, UTC
+from datetime import timedelta, datetime, timezone
 import time
 from dotenv import load_dotenv
 import logging
 import jwt
 import uuid
 from supabase import create_client, Client
+from cryptography.fernet import Fernet
+import base64
 
 # Load environment variables from .env file
 load_dotenv()
@@ -103,7 +105,7 @@ def create_or_update_user(email, name, google_id=None, picture=None):
         user_data = {
             'email': email,
             'name': name,
-            'updated_at': datetime.now(UTC).isoformat()
+            'updated_at': datetime.now(timezone.utc).isoformat()
         }
         
         if google_id:
@@ -119,7 +121,7 @@ def create_or_update_user(email, name, google_id=None, picture=None):
         else:
             # Create new user
             user_data['id'] = str(uuid.uuid4())
-            user_data['created_at'] = datetime.now(UTC).isoformat()
+            user_data['created_at'] = datetime.now(timezone.utc).isoformat()
             result = supabase.table('users').insert(user_data).execute()
             return result.data[0] if result.data else None
             
@@ -174,7 +176,7 @@ def create_prompt_log(user_email, user_id, prompt_text, ai_response=None, action
             'event_data': event_data,
             'ip_address': ip_address,
             'user_agent': user_agent,
-            'created_at': datetime.now(UTC).isoformat()
+            'created_at': datetime.now(timezone.utc).isoformat()
         }
         
         result = supabase.table('prompts').insert(prompt_data).execute()
@@ -192,7 +194,7 @@ def update_prompt_log(prompt_id, ai_response=None, status='success', error_messa
         
     try:
         update_data = {
-            'updated_at': datetime.now(UTC).isoformat()
+            'updated_at': datetime.now(timezone.utc).isoformat()
         }
         
         if ai_response is not None:
@@ -321,6 +323,8 @@ def onboard():
             return jsonify({"error": error_msg}), 400, response_headers
 
         prompt = data["prompt"]
+        encryptor = PromptEncryptor()
+        encrypted_prompt = encryptor.encrypt(prompt)
         user_tz = data["userTimeZone"]
 
         # Create initial prompt log entry only if user is authenticated
@@ -329,7 +333,7 @@ def onboard():
                 prompt_log = create_prompt_log(
                     user_email=user_email,
                     user_id=user_id,
-                    prompt_text=prompt,
+                    prompt_text=encrypted_prompt,
                     status='processing',
                     user_timezone=user_tz,
                     ip_address=str(request.remote_addr),
@@ -343,30 +347,35 @@ def onboard():
 
         # ── Pass BOTH prompt and user_tz into promptToEvent ───────────────────────
         ai_response = main.promptToEvent(prompt, user_tz)
+        processing_time_ms = int((time.time() - start_time) * 1000)
 
+        # Determine status and error message
         if isinstance(ai_response, dict) and "error" in ai_response:
-            processing_time_ms = int((time.time() - start_time) * 1000)
-            
-            # Update prompt log with error
-            if prompt_log_id:
+            status = "error"
+            error_message = ai_response.get("error")
+        else:
+            status = "success"
+            error_message = None
+
+        # Update prompt log with final status, response, and processing time
+        if prompt_log_id:
+            try:
                 update_prompt_log(
-                        prompt_id=prompt_log_id,
-                        ai_response=ai_response,
-                        status='error',
-                        error_message=ai_response.get("error"),
-                        processing_time_ms=processing_time_ms
-                    )
-                    
-            
-            return jsonify(ai_response), 400, response_headers
+                    prompt_id=prompt_log_id,
+                    ai_response=ai_response,
+                    status=status,
+                    error_message=error_message,
+                    processing_time_ms=processing_time_ms,
+                    action_type=ai_response.get("action_type") if isinstance(ai_response, dict) else None,
+                    event_data=ai_response.get("eventParams") if isinstance(ai_response, dict) else None
+                )
+            except Exception as log_error:
+                pass
 
         response_dict = ai_response
         if "action_type" not in response_dict:
-            processing_time_ms = int((time.time() - start_time) * 1000)
             error_msg = "Invalid response format from AI service"
             
-            
-            # Update prompt log with error
             if prompt_log_id:
                     update_prompt_log(
                         prompt_id=prompt_log_id,
@@ -385,7 +394,6 @@ def onboard():
 
         if action_type == "create":
             if "eventParams" not in response_dict or "eventCompletion" not in response_dict:
-                processing_time_ms = int((time.time() - start_time) * 1000)
                 error_msg = "Invalid event creation parameters"
                 
                 if prompt_log_id:
@@ -489,7 +497,6 @@ def onboard():
 
         elif action_type == "view":
             if "query_details" not in response_dict:
-                processing_time_ms = int((time.time() - start_time) * 1000)
                 error_msg = "Missing event query parameters"
                 
                 if prompt_log_id:
@@ -549,7 +556,6 @@ def onboard():
                 return jsonify({"error": error_msg}), 400, response_headers
 
         else:
-            processing_time_ms = int((time.time() - start_time) * 1000)
             error_msg = f"Unsupported action type: {action_type}"
             
             if prompt_log_id:
@@ -682,7 +688,7 @@ def auth_callback():
             'name': user_name,
             'picture': picture,
             'authenticated': True,
-            'login_time': datetime.now(UTC).isoformat()
+            'login_time': datetime.now(timezone.utc).isoformat()
         }
         
         # Add database user ID if available
@@ -728,7 +734,7 @@ def test_session():
         session['test_user'] = {
             'email': 'test@example.com',
             'name': 'Test User',
-            'timestamp': datetime.now(UTC).isoformat()
+            'timestamp': datetime.now(timezone.utc).isoformat()
         }
         session.modified = True
         return jsonify({
@@ -956,7 +962,7 @@ def test_auth():
         'name': 'Test User',
         'picture': 'https://example.com/pic.jpg',
         'authenticated': True,
-        'login_time': datetime.now(UTC).isoformat()
+        'login_time': datetime.now(timezone.utc).isoformat()
     }
 
     session['tokens'] = {
@@ -1215,6 +1221,18 @@ def ping():
         'status_code ' : 200
     }
 
+class PromptEncryptor:
+    def __init__(self):
+        key = os.environ.get('PROMPT_ENCRYPTION_KEY')
+        if not key:
+            raise Exception("PROMPT_ENCRYPTION_KEY not set in environment variables.")
+        self.fernet = Fernet(key.encode())
+
+    def encrypt(self, text):
+        return base64.b64encode(self.fernet.encrypt(text.encode())).decode()
+
+    def decrypt(self, token):
+        return self.fernet.decrypt(base64.b64decode(token.encode())).decode()
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5001)), debug=False)
