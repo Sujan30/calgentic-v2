@@ -383,8 +383,7 @@ const Dashboard = () => {
                       <div className="mt-6">
                         <Button 
                           onClick={() => setResponse(null)} 
-                          variant="outline"
-                          className="glass hover:bg-white/20 dark:hover:bg-black/40 transition"
+                          className="glass bg-primary text-white hover:bg-primary/90 transition"
                         >
                           New Request
                         </Button>
@@ -423,8 +422,7 @@ const Dashboard = () => {
                       <div className="mt-6">
                         <Button 
                           onClick={() => setResponse(null)} 
-                          variant="outline"
-                          className="glass hover:bg-white/20 dark:hover:bg-black/40 transition"
+                          className="glass bg-primary text-white hover:bg-primary/90 transition"
                         >
                           New Request
                         </Button>
@@ -440,8 +438,7 @@ const Dashboard = () => {
                       <div className="mt-6">
                         <Button 
                           onClick={() => setResponse(null)} 
-                          variant="outline"
-                          className="glass hover:bg-white/20 dark:hover:bg-black/40 transition"
+                          className="glass bg-primary text-white hover:bg-primary/90 transition"
                         >
                           New Request
                         </Button>
