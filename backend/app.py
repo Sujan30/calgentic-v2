@@ -334,6 +334,7 @@ def onboard():
 
         # Send plain prompt to AI
         ai_response = main.promptToEvent(prompt, user_tz)
+        print("AI response:", ai_response)
 
         # Encrypt only for storage
         encryptor = PromptEncryptor()
@@ -426,7 +427,9 @@ def onboard():
                 event_data["timeZone"] = user_tz
 
                 try:
+                    print("Event data to formatEvent:", event_data)
                     result = main.formatEvent(event_data)
+                    print("Result from formatEvent:", result)
                     processing_time_ms = int((time.time() - start_time) * 1000)
                     
                     if result and result.get("success", False):
