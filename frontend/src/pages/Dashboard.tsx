@@ -357,7 +357,7 @@ const Dashboard = () => {
                 {!response && !isLoading && (
                   <div className="flex flex-wrap justify-center gap-4 mt-6 text-sm text-gray-500 dark:text-gray-300">
                     <span className="glass px-3 py-1 cursor-pointer hover:bg-white/20 dark:hover:bg-black/40 transition"
-                      onClick={() => handlePromptSubmit("What events do I have this week?")}>
+                      onClick={() => handlePromptSubmit("What events do I have today?")}>
                       "What events do I have today?"
                     </span>
                     <span className="glass px-3 py-1 cursor-pointer hover:bg-white/20 dark:hover:bg-black/40 transition"
