@@ -425,7 +425,7 @@ def onboard():
                 try:
                     print("Event data to formatEvent:", event_data)
                     # Pass session to formatEvent
-                    result, refreshed_tokens = main.formatEvent(token_info=tokens, event_data=event_data)
+                    result, refreshed_tokens = main.formatEvent(token_info=tokens, event=event_data)
                     session['tokens'] = refreshed_tokens
                     print("Result from formatEvent:", result)
                     processing_time_ms = int((time.time() - start_time) * 1000)
