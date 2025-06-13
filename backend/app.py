@@ -762,7 +762,7 @@ def auth_callback():
         if not token_response.ok:
             return redirect(f"{frontend_url}/login?error=token_exchange_failed")
 
-        tokens = require_tokens()
+        tokens = token_response.json()
 
         id_token = tokens.get('id_token')
         if not id_token:
@@ -815,10 +815,12 @@ def auth_callback():
         
         # Redirect directly to dashboard instead of frontend auth callback
         redirect_url_final = f"{frontend_url}/dashboard"
+        logger.info(f"Session after login: {dict(session)}")
         return redirect(redirect_url_final)
 
     except Exception as e:
         import traceback
+        logger.error("Exception in /auth/callback: %s", traceback.format_exc())
         return redirect(f"{frontend_url}/login?error=exception")
 
 @app.route("/auth/user")
@@ -918,6 +920,7 @@ def check_auth():
         })
 
     user_email = session['user'].get('email')
+    logger.info(f"Session at check-auth: {dict(session)}")
     return jsonify({
         'authenticated': True,
         'user': session['user'],
