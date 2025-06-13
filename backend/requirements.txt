@@ -28,6 +28,8 @@ PyJWT==2.8.0
 # HTTP Client
 requests==2.31.0
 
+# Redis
+redis==6.2.0
 # Session Management
 Flask-Session==0.7.0
 
