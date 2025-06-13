@@ -2,7 +2,7 @@ import json
 import os
 import main
 import requests
-from flask import Flask, send_from_directory, jsonify, request, redirect, session
+from flask import Flask, send_from_directory, jsonify, request, redirect, session, abort
 from flask_session import Session
 from google_auth_oauthlib.flow import InstalledAppFlow
 from flask_cors import CORS
@@ -15,6 +15,8 @@ import uuid
 from supabase import create_client, Client
 from cryptography.fernet import Fernet
 import base64
+
+#hello world
 
 # Load environment variables from .env file
 load_dotenv()
@@ -244,6 +246,13 @@ if not os.path.exists(client_secret_file):
 def index():
     return send_from_directory(app.static_folder, 'index.html')
 
+
+def require_tokens():
+    tokens = session.get('tokens')
+    if not tokens:
+        abort(401, "Login required")
+    return tokens
+
 @app.route("/prompt", methods=["POST", "OPTIONS"])
 def onboard():
     # Handle OPTIONS preflight
@@ -292,7 +301,7 @@ def onboard():
         user_session = session.get("user")
         user_email = user_session.get('email') if user_session else "anonymous"
         user_id = user_session.get('db_user_id') if user_session else None
-        
+        tokens = require_tokens()
         # Only log if user is authenticated (has valid user_id)
         should_log = user_email != "anonymous" and user_id is not None
         
@@ -415,7 +424,8 @@ def onboard():
                 try:
                     print("Event data to formatEvent:", event_data)
                     # Pass session to formatEvent
-                    result = main.formatEvent(event_data, session)
+                    result, refreshed_tokens = main.formatEvent(tokens, event_data)
+                    session['tokens'] = refreshed_tokens
                     print("Result from formatEvent:", result)
                     processing_time_ms = int((time.time() - start_time) * 1000)
                     
@@ -519,7 +529,8 @@ def onboard():
 
             try:
                 # Pass session to findEvent
-                view_result = main.findEvent(session=session, query_details=query_details, user_tz=user_tz)
+                view_result , refreshed_tokens = main.findEvent(session=tokens, query_details=query_details, user_tz=user_tz)
+                session['tokens'] = refreshed_tokens
                 processing_time_ms = int((time.time() - start_time) * 1000)
                 
                 # Update prompt log with success
@@ -580,16 +591,18 @@ def onboard():
             
             try:
                 # First find the event to get its ID
-                find_result = main.findEvent(session=session, query_details=query_details, user_tz=user_tz)
+                find_result, refreshed_tokens = main.findEvent(session=session, query_details=query_details, user_tz=user_tz)
+                session['tokens'] = refreshed_tokens
                 
                 if find_result.get("success") and find_result.get("events") and len(find_result["events"]) > 0:
                     # Delete the first matching event
                     event_to_delete = find_result["events"][0]
-                    delete_result = main.deleteEvent(
-                        session=session,
+                    delete_result, refreshed_tokens = main.deleteEvent(
+                        session=tokens,
                         eventId=event_to_delete.get("id"),
                         calendarId=query_details.get("calendarId", "primary")
                     )
+                    session['tokens'] = refreshed_tokens
                     
                     processing_time_ms = int((time.time() - start_time) * 1000)
                     
@@ -749,7 +762,7 @@ def auth_callback():
         if not token_response.ok:
             return redirect(f"{frontend_url}/login?error=token_exchange_failed")
 
-        tokens = token_response.json()
+        tokens = require_tokens()
 
         id_token = tokens.get('id_token')
         if not id_token:

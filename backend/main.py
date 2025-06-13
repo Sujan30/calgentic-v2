@@ -15,6 +15,46 @@ load_dotenv()
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
 
+def _calendar_auth(token_info: dict) -> Credentials:
+    if not token_info or 'access_token' not in token_info:
+        raise ValueError("Missing tokens; user not authenticated")
+
+    creds = Credentials(
+        token=token_info['access_token'],
+        refresh_token=token_info.get('refresh_token'),
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=os.getenv('GOOGLE_CLIENT_ID'),
+        client_secret=os.getenv('GOOGLE_CLIENT_SECRET'),
+        scopes=SCOPES
+    )
+
+    if creds.expired and creds.refresh_token:
+        creds.refresh(Request())
+        # update the token_info dict in place so caller can re-save it
+        token_info['access_token'] = creds.token
+        token_info['expires_at']   = creds.expiry.timestamp() if creds.expiry else None
+
+    return creds
+
+def _build_service(token_info: dict):
+    creds = _calendar_auth(token_info)
+    return build('calendar', 'v3', credentials=creds)
+
+def create_event(token_info: dict, event_body: dict) -> dict:
+    service = _build_service(token_info)
+    return service.events().insert(
+        calendarId='primary',
+        body=event_body
+    ).execute()
+
+def list_events(token_info: dict, **kwargs) -> dict:
+    service = _build_service(token_info)
+    return service.events().list(
+        calendarId='primary',
+        **kwargs
+    ).execute()
+
+
 def calendarAuth(session):
     """Authenticate using tokens from Flask session"""
     if not session or 'tokens' not in session:
@@ -42,13 +82,13 @@ def calendarAuth(session):
     return creds
 
 
-def createEvent(session, summary, description, start_iso, end_iso=None, calendar_id="primary", user_tz="UTC"):
+def createEvent(token_info, summary, description, start_iso, end_iso=None, calendar_id="primary", user_tz="UTC"):
     """
     Create a Google Calendar event using exactly the user's IANA timezone (user_tz).
     - `start_iso` and `end_iso` must already be full ISO‐8601 strings with offset (e.g. "2025-06-02T17:00:00+02:00").
     - `user_tz` is something like "Europe/Paris" or "America/Los_Angeles".
     """
-    creds = calendarAuth(session)
+    creds = _calendar_auth(token_info)
     service = build("calendar", "v3", credentials=creds)
 
     if not summary or not start_iso:
@@ -122,12 +162,12 @@ def createEvent(session, summary, description, start_iso, end_iso=None, calendar
     return False
 
 
-def getEvents(session, calendarId='primary', day=None):
+def getEvents(token_info, calendarId='primary', day=None):
     """Get calendar events"""
     if day is None:
         day = datetime.datetime.now(datetime.timezone.utc).isoformat()
     
-    creds = calendarAuth(session)
+    creds = _calendar_auth(token_info)
     service = build("calendar", "v3", credentials=creds)
     
     events_result = service.events().list(
@@ -141,10 +181,10 @@ def getEvents(session, calendarId='primary', day=None):
     return events_result.get('items', [])
 
 
-def validateCalendarId(session, calId):
+def validateCalendarId(token_info, calId):
     """Validate if a calendar ID exists for the user"""
     try:
-        creds = calendarAuth(session)
+        creds = _calendar_auth(token_info)
         service = build("calendar", "v3", credentials=creds)
         
         calendar_list = service.calendarList().list().execute()
@@ -158,10 +198,10 @@ def validateCalendarId(session, calId):
         raise
 
 
-def deleteEvent(session, eventId, calendarId='primary'):
+def deleteEvent(token_info, eventId, calendarId='primary'):
     """Delete a calendar event"""
     try:
-        creds = calendarAuth(session)
+        creds = _calendar_auth(token_info)
         service = build('calendar', 'v3', credentials=creds)
         service.events().delete(calendarId=calendarId, eventId=eventId).execute()
         return {
