@@ -530,7 +530,7 @@ def onboard():
 
             try:
                 # Pass session to findEvent
-                view_result , refreshed_tokens = main.findEvent(session=tokens, query_details=query_details, user_tz=user_tz)
+                view_result , refreshed_tokens = main.findEvent(token_info=tokens, query_details=query_details, user_tz=user_tz)
                 session['tokens'] = refreshed_tokens
                 processing_time_ms = int((time.time() - start_time) * 1000)
                 
@@ -592,7 +592,7 @@ def onboard():
             
             try:
                 # First find the event to get its ID
-                find_result, refreshed_tokens = main.findEvent(session=session, query_details=query_details, user_tz=user_tz)
+                find_result, refreshed_tokens = main.findEvent(token_info=session, query_details=query_details, user_tz=user_tz)
                 session['tokens'] = refreshed_tokens
                 
                 if find_result.get("success") and find_result.get("events") and len(find_result["events"]) > 0:
