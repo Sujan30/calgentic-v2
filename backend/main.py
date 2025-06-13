@@ -29,45 +29,28 @@ calendarId = None
 
 
 def calendarAuth():
-    global creds # Make sure 'creds' is accessible outside this function if needed
-
-    # Get tokens from session
     session = flask.session
     if not session or 'tokens' not in session:
-        print("No tokens found in session")
         raise Exception("Authentication required. Please log in through the web interface.")
 
     tokens = session['tokens']
     if not tokens or 'access_token' not in tokens:
-        print("No access token found in session")
         raise Exception("Authentication required. Please log in through the web interface.")
 
-    try:
-        # Create credentials from session tokens
-        creds = Credentials(
-            token=tokens['access_token'],
-            refresh_token=tokens.get('refresh_token'),
-            token_uri="https://oauth2.googleapis.com/token",
-            client_id=os.getenv('GOOGLE_CLIENT_ID'),
-            client_secret=os.getenv('GOOGLE_CLIENT_SECRET'),
-            scopes=SCOPES
-        )
-        print("Successfully created credentials from session tokens")
-    except Exception as e:
-        print(f"Error creating credentials from session tokens: {e}")
-        raise Exception("Failed to create credentials from session tokens")
+    creds = Credentials(
+        token=tokens['access_token'],
+        refresh_token=tokens.get('refresh_token'),
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=os.getenv('GOOGLE_CLIENT_ID'),
+        client_secret=os.getenv('GOOGLE_CLIENT_SECRET'),
+        scopes=SCOPES
+    )
 
-    # Check if token needs refresh
+    # Refresh if needed
     if creds.expired and creds.refresh_token:
-        try:
-            creds.refresh(Request())
-            # Update session with new tokens
-            session['tokens']['access_token'] = creds.token
-            session['tokens']['expires_at'] = creds.expiry.timestamp() if creds.expiry else None
-            print("Successfully refreshed tokens")
-        except Exception as e:
-            print(f"Error refreshing tokens: {e}")
-            raise Exception("Failed to refresh tokens")
+        creds.refresh(Request())
+        session['tokens']['access_token'] = creds.token
+        session['tokens']['expires_at'] = creds.expiry.timestamp() if creds.expiry else None
 
     return creds
 
@@ -95,14 +78,8 @@ def createEvent(summary, description, start_iso, end_iso=None, calendar_id="prim
     - `start_iso` and `end_iso` must already be full ISO‐8601 strings with offset (e.g. "2025-06-02T17:00:00+02:00").
     - `user_tz` is something like "Europe/Paris" or "America/Los_Angeles".
     """
-    global service, creds
-
-    # Ensure credentials exist
-    if creds is None:
-        calendarAuth()
-
-    if service is None and creds is not None:
-        service = build("calendar", "v3", credentials=creds)
+    creds = calendarAuth()  # Always get creds from session
+    service = build("calendar", "v3", credentials=creds)
 
     if not summary or not start_iso:
         print("Missing required parameters for createEvent")
@@ -127,7 +104,7 @@ def createEvent(summary, description, start_iso, end_iso=None, calendar_id="prim
         print(f"Invalid datetime format: {e}")
         return False
 
-    # Use the USER’S timezone (user_tz), not server’s. Do NOT compute server‐side tz anymore.
+    # Use the USER'S timezone (user_tz), not server's. Do NOT compute server‐side tz anymore.
     event_body = {
         "summary": summary,
         "description": description or "",
@@ -241,7 +218,7 @@ def promptToEvent(prompt, user_tz):
         You are a calendar assistant. Given the user's input, determine if they want to create a new event or view existing events.
         
         Today's date is {today_str} in the timezone {time_str} in the time zone {tz_offset} which is the users time zone as {user_tz}
-        When interpreting “tomorrow at 5pm”, interpret “5pm” in exactly {user_tz} (including DST).  
+        When interpreting "tomorrow at 5pm", interpret "5pm" in exactly {user_tz} (including DST).  
         If they want to create an event, return raw JSON only:
         
         When interpreting dates and times:
@@ -411,20 +388,17 @@ def formatEvent(event):
         }
 def findEvent(query_details, user_tz):
     """
-    Finds events based on provided criteria in the user’s timezone.
+    Finds events based on provided criteria in the user's timezone.
     - query_details may include:
         - date:       "YYYY-MM-DD"
         - title:      string
         - start:      full ISO-8601 string with offset (e.g. "2025-06-02T17:00:00+02:00")
         - end:        full ISO-8601 string with offset
         - calendarId: string (defaults to "primary")
-    - user_tz is the user’s IANA timezone (e.g. "America/Los_Angeles").
+    - user_tz is the user's IANA timezone (e.g. "America/Los_Angeles").
     """
-    global service, creds
-
-    # Initialize Google Calendar service if needed
-    if service is None and creds is not None:
-        service = build("calendar", "v3", credentials=creds)
+    creds = calendarAuth()  # Always get creds from session
+    service = build("calendar", "v3", credentials=creds)
 
     # Safely pull out fields
     date_str    = query_details.get("date", None)       # "YYYY-MM-DD"
@@ -450,7 +424,7 @@ def findEvent(query_details, user_tz):
             elif date_str:
                 # If they gave a date and a start, interpret date in user_tz, then set timeMax to end of that local day
                 date_local = datetime.datetime.fromisoformat(date_str).date()
-                # midnight at user’s timezone
+                # midnight at user's timezone
                 start_of_day_local = tz.localize(datetime.datetime.combine(date_local, datetime.time.min))
                 end_of_day_local   = tz.localize(datetime.datetime.combine(date_local, datetime.time.max))
                 timeMax = end_of_day_local.astimezone(datetime.timezone.utc).isoformat()
@@ -468,7 +442,7 @@ def findEvent(query_details, user_tz):
             timeMin = start_of_day_local.astimezone(datetime.timezone.utc).isoformat()
             timeMax = end_of_day_local.astimezone(datetime.timezone.utc).isoformat()
 
-        # 3) If neither start nor date is provided, default to “today” in user_tz
+        # 3) If neither start nor date is provided, default to "today" in user_tz
         else:
             now_local = datetime.datetime.now(tz)
             today_local = now_local.date()
@@ -505,7 +479,7 @@ def findEvent(query_details, user_tz):
             formatted_events.append({
                 "summary": ev.get("summary", "No title"),
                 "description": ev.get("description", "No description"),
-                # These are returned in the event’s own timezone, so just relay them as-is
+                # These are returned in the event's own timezone, so just relay them as-is
                 "start": ev.get("start", {}).get("dateTime", ev.get("start", {}).get("date", "No start time")),
                 "end":   ev.get("end", {}).get("dateTime", ev.get("end", {}).get("date", "No end time")),
                 "link":  ev.get("htmlLink", "No link available")
