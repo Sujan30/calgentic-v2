@@ -44,7 +44,7 @@ frontend_url = os.getenv('frontend_url', 'http://localhost:8080')
 app.config['SESSION_TYPE'] = 'filesystem'
 app.config['SESSION_PERMANENT'] = True
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=5)
-app.config['SESSION_COOKIE_SECURE'] = environment == 'production'
+app.config['SESSION_COOKIE_SECURE'] = True
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_PATH'] = '/'
 app.config['SESSION_COOKIE_NAME'] = 'calgentic_session'
@@ -64,19 +64,12 @@ else:
 Session(app)
 
 # Enable CORS for allowed origins
-CORS(app, 
-     supports_credentials=True, 
+CORS(app,
+     supports_credentials=True,
      resources={r"/*": {
          "origins": [
-             "http://localhost:8080",
-             "http://127.0.0.1:8080",
-             "http://localhost:8081",
-             "http://127.0.0.1:8081",
-             "http://localhost:5001",
-             "http://127.0.0.1:5001",
              "https://calgentic.com",
-             "https://www.calgentic.com",
-             "https://calgentic.onrender.com",
+             "https://www.calgentic.com"
          ],
          "methods": ["GET", "POST", "OPTIONS"],
          "allow_headers": ["Content-Type", "Authorization", "Accept"],
