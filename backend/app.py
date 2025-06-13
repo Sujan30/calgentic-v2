@@ -15,7 +15,7 @@ import uuid
 from supabase import create_client, Client
 from cryptography.fernet import Fernet
 import base64
-
+from redis import Redis
 #hello world
 
 # Load environment variables from .env file
@@ -42,7 +42,8 @@ environment = os.environ.get("FLASK_ENV", "development")
 frontend_url = os.getenv('frontend_url', 'http://localhost:8080')
 
 # Session configuration - different for dev and prod
-app.config['SESSION_TYPE'] = 'filesystem'
+app.config['SESSION_TYPE'] = 'redis'
+app.config['SESSION_REDIS'] = Redis.from_url(os.environ.get('REDIS_URL'))
 app.config['SESSION_PERMANENT'] = True
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=5)
 app.config['SESSION_COOKIE_HTTPONLY'] = True
