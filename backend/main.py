@@ -1,3 +1,5 @@
+import logging
+from typing import Dict, Any, Tuple
 import os
 import datetime
 import pytz
@@ -82,55 +84,41 @@ def calendarAuth(session):
     return creds
 
 
-def createEvent(token_info, summary, description, start_iso, end_iso=None, calendar_id="primary", user_tz="UTC"):
+def createEvent(token_info: Dict[str, Any], summary: str, description: str, start_iso: str, end_iso: str = None, calendar_id: str = "primary", user_tz: str = "UTC") -> Tuple[Any, Dict[str, Any]]:
     """
     Create a Google Calendar event using exactly the user's IANA timezone (user_tz).
-    - `start_iso` and `end_iso` must already be full ISO‐8601 strings with offset (e.g. "2025-06-02T17:00:00+02:00").
-    - `user_tz` is something like "Europe/Paris" or "America/Los_Angeles".
+    Returns (created_event_dict or False, updated_token_info).
     """
     creds = _calendar_auth(token_info)
     service = build("calendar", "v3", credentials=creds)
 
     if not summary or not start_iso:
-        print("Missing required parameters for createEvent")
-        return False
+        logging.error("Missing required parameters for createEvent")
+        return False, token_info
 
     try:
-        # Parse the full ISO‐8601 with offset in start_iso
         start_dt = datetime.datetime.fromisoformat(start_iso)
-        
-        # If end_iso is omitted, default to 1 hour after
-        if not end_iso or end_iso == "":
+        if not end_iso:
             end_dt = start_dt + datetime.timedelta(hours=1)
             end_iso = end_dt.isoformat()
         else:
             end_dt = datetime.datetime.fromisoformat(end_iso)
-
         if end_dt <= start_dt:
-            print("Error: End time must be after start time")
-            return False
-
+            logging.error("End time must be after start time")
+            return False, token_info
     except ValueError as e:
-        print(f"Invalid datetime format: {e}")
-        return False
+        logging.error(f"Invalid datetime format: {e}")
+        return False, token_info
 
-    # Use the USER'S timezone (user_tz), not server's
     event_body = {
         "summary": summary,
         "description": description or "",
-        "start": {
-            "dateTime": start_iso,
-            "timeZone": user_tz,
-        },
-        "end": {
-            "dateTime": end_iso,
-            "timeZone": user_tz,
-        },
+        "start": {"dateTime": start_iso, "timeZone": user_tz},
+        "end": {"dateTime": end_iso, "timeZone": user_tz},
     }
 
-    print(f"Event object being sent to Google: {event_body}")
+    logging.debug(f"Event object being sent to Google: {event_body}")
 
-    # Retry logic for timeouts
     original_timeout = socket.getdefaulttimeout()
     socket.setdefaulttimeout(30)
     max_retries = 3
@@ -139,27 +127,27 @@ def createEvent(token_info, summary, description, start_iso, end_iso=None, calen
     while retry_count < max_retries:
         try:
             created = service.events().insert(calendarId=calendar_id, body=event_body).execute()
-            print(f"Event created: {created.get('htmlLink')}")
+            logging.info(f"Event created: {created.get('htmlLink')}")
             socket.setdefaulttimeout(original_timeout)
-            return created
+            return created, token_info
         except socket.timeout:
             retry_count += 1
-            print(f"Request timed out. Retry attempt {retry_count} of {max_retries}")
+            logging.warning(f"Request timed out. Retry attempt {retry_count} of {max_retries}")
             if retry_count >= max_retries:
-                print("Max retries reached. Could not create event.")
+                logging.error("Max retries reached. Could not create event.")
                 socket.setdefaulttimeout(original_timeout)
-                return False
+                return False, token_info
         except HttpError as error:
-            print(f"HTTP error occurred: {error}")
+            logging.error(f"HTTP error occurred: {error}")
             socket.setdefaulttimeout(original_timeout)
-            return False
+            return False, token_info
         except Exception as e:
-            print(f"Unexpected error in createEvent: {str(e)}")
+            logging.error(f"Unexpected error in createEvent: {e}")
             socket.setdefaulttimeout(original_timeout)
-            return False
+            return False, token_info
 
     socket.setdefaulttimeout(original_timeout)
-    return False
+    return False, token_info
 
 
 def getEvents(token_info, calendarId='primary', day=None):
@@ -180,53 +168,54 @@ def getEvents(token_info, calendarId='primary', day=None):
     
     return events_result.get('items', [])
 
+def validateCalendarId(token_info: Dict[str, Any], calId: str) -> Tuple[str, Dict[str, Any]]:
+    """
+    Validate if a calendar ID exists for the user.
+    Returns (calId, updated_token_info) or raises ValueError.
+    """
+    creds = _calendar_auth(token_info)
+    service = build("calendar", "v3", credentials=creds)
 
-def validateCalendarId(token_info, calId):
-    """Validate if a calendar ID exists for the user"""
-    try:
-        creds = _calendar_auth(token_info)
-        service = build("calendar", "v3", credentials=creds)
-        
-        calendar_list = service.calendarList().list().execute()
-        for calendar in calendar_list.get('items', []):
-            if calendar.get('id') == calId:
-                return calId
-        
-        raise ValueError(f'Calendar ID {calId} not found')
-    except Exception as e:
-        print(f'Error validating calendar: {e}')
-        raise
+    calendar_list = service.calendarList().list().execute()
+    for calendar in calendar_list.get('items', []):
+        if calendar.get('id') == calId:
+            return calId, token_info
+
+    raise ValueError(f'Calendar ID {calId} not found')
 
 
-def deleteEvent(token_info, eventId, calendarId='primary'):
-    """Delete a calendar event"""
+def deleteEvent(token_info: Dict[str, Any], eventId: str, calendarId: str = 'primary') -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """
+    Delete a calendar event.
+    Returns (response_dict, updated_token_info).
+    """
     try:
         creds = _calendar_auth(token_info)
         service = build('calendar', 'v3', credentials=creds)
         service.events().delete(calendarId=calendarId, eventId=eventId).execute()
-        return {
+        return ({
             "success": True,
             "message": "Event deleted successfully"
-        }
+        }, token_info)
     except HttpError as e:
         if e.resp.status == 404:
-            return {
+            return ({
                 "success": False,
                 "message": "Event not found",
                 "error": "Event not found"
-            }
-        return {
+            }, token_info)
+        return ({
             "success": False,
             "message": "Failed to delete event",
             "error": str(e)
-        }
+        }, token_info)
     except Exception as e:
-        print(f"Error in deleteEvent: {e}")
-        return {
+        logging.error(f"Error in deleteEvent: {e}")
+        return ({
             "success": False,
             "message": "Error deleting event",
             "error": str(e)
-        }
+        }, token_info)
 
 
 def promptToEvent(prompt, user_tz):
@@ -352,84 +341,61 @@ def promptToEvent(prompt, user_tz):
         }
 
 
-def formatEvent(event, session):
-    """Format and create an event with session context"""
-    try:
-        print(f"Event data received: {event}")
-        print(f"Event data type: {type(event)}")
-        
-        # Check if all required keys exist
-        required_keys = ['summary', 'description', 'start', 'end']
-        for key in required_keys:
-            if key not in event:
-                print(f"Missing required key: {key}")
-                return {
-                    "success": False,
-                    "message": f"Missing required key: {key}",
-                    "error": f"Event data is missing the required '{key}' field"
-                }
-        
-        summary = event['summary']
-        description = event['description']
-        start = event['start']
-        end = event['end']
-        calendarId = event.get('calendarId', 'primary')
-        user_tz = event.get('timeZone', 'UTC')  # Get timezone from event data
-        
-        print(f"Summary: {summary}")
-        print(f"Description: {description}")
-        print(f"Start: {start}")
-        print(f"End: {end}")
-        print(f"CalendarId: {calendarId}")
-        print(f"TimeZone: {user_tz}")
-        
-        try:
-            result = createEvent(
-                session=session,
-                summary=summary,
-                description=description,
-                start_iso=start,
-                end_iso=end,
-                calendar_id=calendarId,
-                user_tz=user_tz
-            )
-            
-            if result:
-                return {
-                    "success": True,
-                    "message": "Event created successfully",
-                    "event": {
-                        "summary": summary,
-                        "description": description,
-                        "start": start,
-                        "end": end,
-                        "calendarId": calendarId,
-                        "link": result.get('htmlLink', '')
-                    }
-                }
-            else:
-                print("Error in createEvent function")
-                return {
-                    "success": False,
-                    "message": "Failed to create event",
-                    "error": "Unknown error in createEvent function"
-                }
-        except Exception as e:
-            print(f"Error in createEvent: {str(e)}")
-            return {
+def formatEvent(token_info: Dict[str, Any], event: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """
+    Create a Google Calendar event using token_info and event data.
+    Returns (response_dict, updated_token_info).
+    """
+    # Validate required fields
+    for key in ('summary', 'description', 'start', 'end'):
+        if key not in event:
+            return ({
                 "success": False,
-                "message": "Error creating event",
-                "error": str(e)
+                "message": f"Missing required key: {key}",
+                "error": f"Event data is missing '{key}'"
+            }, token_info)
+
+    # Build calendar service
+    creds = _calendar_auth(token_info)
+    service = build('calendar', 'v3', credentials=creds)
+
+    body = {
+        'summary':     event['summary'],
+        'description': event['description'],
+        'start':       {'dateTime': event['start'], 'timeZone': event.get('timeZone', 'UTC')},
+        'end':         {'dateTime': event['end'],   'timeZone': event.get('timeZone', 'UTC')}
+    }
+
+    try:
+        created = service.events().insert(calendarId=event.get('calendarId','primary'), body=body).execute()
+        response = {
+            "success": True,
+            "message": "Event created successfully",
+            "event": {
+                "summary": event['summary'],
+                "description": event['description'],
+                "start": event['start'],
+                "end": event['end'],
+                "calendarId": event.get('calendarId','primary'),
+                "link": created.get('htmlLink', '')
             }
+        }
+        return response, token_info
+
+    except HttpError as e:
+        err = e.error_details if hasattr(e, 'error_details') else str(e)
+        return ({
+            "success": False,
+            "message": "Failed to create event",
+            "error": err
+        }, token_info)
     except Exception as e:
-        print(f"Error in formatEvent: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return {
+        return ({
             "success": False,
             "message": "Error formatting event",
             "error": str(e)
-        }
+        }, token_info)
+
 
 
 def findEvent(session, query_details, user_tz):
