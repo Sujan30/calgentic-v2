@@ -19,7 +19,6 @@ import base64
 # Load environment variables from .env file
 load_dotenv()
 
-
 start_time = time.time()
 app = Flask(__name__, static_folder='static', static_url_path='')
 
@@ -53,7 +52,6 @@ if environment == 'production':
     app.config['SESSION_COOKIE_DOMAIN'] = '.calgentic.com'
     app.config['SESSION_COOKIE_SAMESITE'] = 'None'
     app.config['SESSION_COOKIE_SECURE'] = True
-
 else:
     # For development, don't set domain (defaults to current domain)
     app.config['SESSION_COOKIE_DOMAIN'] = None
@@ -180,7 +178,7 @@ def create_prompt_log(user_email, user_id, prompt_text, ai_response=None, action
 
 def update_prompt_log(prompt_id, ai_response=None, status='success', error_message=None, 
                      processing_time_ms=None, token_usage=None, event_created=False, 
-                     event_data=None):
+                     event_data=None, action_type=None):
     """Update an existing prompt log entry"""
     if not supabase:
         return None
@@ -204,6 +202,8 @@ def update_prompt_log(prompt_id, ai_response=None, status='success', error_messa
             update_data['event_created'] = event_created
         if event_data is not None:
             update_data['event_data'] = event_data
+        if action_type is not None:
+            update_data['action_type'] = action_type
             
         result = supabase.table('prompts').update(update_data).eq('id', prompt_id).execute()
         return result.data[0] if result.data else None
@@ -233,8 +233,6 @@ GOOGLE_CLIENT_ID = os.getenv("google_client_id")
 GOOGLE_CLIENT_SECRET = os.getenv("google_client_secret")
 redirect_url = os.getenv('redirect_url', 'http://localhost:5001/auth/callback')
 
-
-
 if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
     raise Exception("Google OAuth credentials not set. Check your environment variables.")
 
@@ -242,15 +240,12 @@ client_secret_file = os.getenv('credentials_path')
 if not os.path.exists(client_secret_file):
     raise FileNotFoundError(f"Credentials file not found at: {client_secret_file}")
 
-
 @app.route('/')
 def index():
     return send_from_directory(app.static_folder, 'index.html')
 
 @app.route("/prompt", methods=["POST", "OPTIONS"])
 def onboard():
-
-
     # Handle OPTIONS preflight
     if request.method == "OPTIONS":
         response = app.make_default_options_response()
@@ -301,7 +296,7 @@ def onboard():
         # Only log if user is authenticated (has valid user_id)
         should_log = user_email != "anonymous" and user_id is not None
         
-        # ── Validate that both "prompt" and "userTimeZone" exist ─────────────────
+        # Validate that both "prompt" and "userTimeZone" exist
         if not data or "prompt" not in data or "userTimeZone" not in data:
             error_msg = "Request body must include both 'prompt' and 'userTimeZone'."
             
@@ -320,7 +315,7 @@ def onboard():
                         user_agent=request.headers.get('User-Agent', '')
                     )
                 except Exception as log_error:
-                    print(f'error {e}')
+                    print(f'error {log_error}')
             
             return jsonify({"error": error_msg}), 400, response_headers
 
@@ -353,7 +348,6 @@ def onboard():
         else:
             prompt_log_id = None
 
-        # ── Pass BOTH prompt and user_tz into promptToEvent ───────────────────────
         processing_time_ms = int((time.time() - start_time) * 1000)
 
         # Determine status and error message
@@ -384,14 +378,13 @@ def onboard():
             error_msg = "Invalid response format from AI service"
             
             if prompt_log_id:
-                    update_prompt_log(
-                        prompt_id=prompt_log_id,
-                        ai_response=response_dict,
-                        status='error',
-                        error_message=error_msg,
-                        processing_time_ms=processing_time_ms
-                    )
-                
+                update_prompt_log(
+                    prompt_id=prompt_log_id,
+                    ai_response=response_dict,
+                    status='error',
+                    error_message=error_msg,
+                    processing_time_ms=processing_time_ms
+                )
             
             return jsonify({"error": error_msg}), 400, response_headers
 
@@ -404,15 +397,13 @@ def onboard():
                 error_msg = "Invalid event creation parameters"
                 
                 if prompt_log_id:
-                    
                     update_prompt_log(
-                            prompt_id=prompt_log_id,
-                            ai_response=response_dict,
-                            status='error',
-                            error_message=error_msg,
-                            processing_time_ms=processing_time_ms
-                        )
-                    
+                        prompt_id=prompt_log_id,
+                        ai_response=response_dict,
+                        status='error',
+                        error_message=error_msg,
+                        processing_time_ms=processing_time_ms
+                    )
                 
                 return jsonify({"error": error_msg}), 400, response_headers
 
@@ -423,7 +414,8 @@ def onboard():
 
                 try:
                     print("Event data to formatEvent:", event_data)
-                    result = main.formatEvent(event_data)
+                    # Pass session to formatEvent
+                    result = main.formatEvent(event_data, session)
                     print("Result from formatEvent:", result)
                     processing_time_ms = int((time.time() - start_time) * 1000)
                     
@@ -526,7 +518,8 @@ def onboard():
             query_details = response_dict["query_details"]
 
             try:
-                view_result = main.findEvent(query_details=query_details, user_tz=user_tz)
+                # Pass session to findEvent
+                view_result = main.findEvent(session=session, query_details=query_details, user_tz=user_tz)
                 processing_time_ms = int((time.time() - start_time) * 1000)
                 
                 # Update prompt log with success
@@ -548,6 +541,98 @@ def onboard():
             except Exception as e:
                 processing_time_ms = int((time.time() - start_time) * 1000)
                 error_msg = f"Error finding events: {str(e)}"
+                
+                if prompt_log_id:
+                    try:
+                        update_prompt_log(
+                            prompt_id=prompt_log_id,
+                            ai_response=response_dict,
+                            status='error',
+                            error_message=error_msg,
+                            processing_time_ms=processing_time_ms,
+                            action_type=action_type
+                        )
+                    except Exception as log_error:
+                        pass
+                
+                return jsonify({"error": error_msg}), 400, response_headers
+
+        elif action_type == "delete":
+            if "query_details" not in response_dict:
+                error_msg = "Missing event query parameters for deletion"
+                
+                if prompt_log_id:
+                    try:
+                        update_prompt_log(
+                            prompt_id=prompt_log_id,
+                            ai_response=response_dict,
+                            status='error',
+                            error_message=error_msg,
+                            processing_time_ms=processing_time_ms,
+                            action_type=action_type
+                        )
+                    except Exception as log_error:
+                        pass
+                
+                return jsonify({"error": error_msg}), 400, response_headers
+
+            query_details = response_dict["query_details"]
+            
+            try:
+                # First find the event to get its ID
+                find_result = main.findEvent(session=session, query_details=query_details, user_tz=user_tz)
+                
+                if find_result.get("success") and find_result.get("events") and len(find_result["events"]) > 0:
+                    # Delete the first matching event
+                    event_to_delete = find_result["events"][0]
+                    delete_result = main.deleteEvent(
+                        session=session,
+                        eventId=event_to_delete.get("id"),
+                        calendarId=query_details.get("calendarId", "primary")
+                    )
+                    
+                    processing_time_ms = int((time.time() - start_time) * 1000)
+                    
+                    # Update prompt log
+                    if prompt_log_id:
+                        try:
+                            update_prompt_log(
+                                prompt_id=prompt_log_id,
+                                ai_response=response_dict,
+                                status='success' if delete_result.get("success") else 'error',
+                                error_message=delete_result.get("error") if not delete_result.get("success") else None,
+                                processing_time_ms=processing_time_ms,
+                                action_type=action_type,
+                                event_data=query_details
+                            )
+                        except Exception as log_error:
+                            pass
+                    
+                    return jsonify(delete_result), 200 if delete_result.get("success") else 400, response_headers
+                else:
+                    error_msg = "No matching event found to delete"
+                    
+                    if prompt_log_id:
+                        try:
+                            update_prompt_log(
+                                prompt_id=prompt_log_id,
+                                ai_response=response_dict,
+                                status='error',
+                                error_message=error_msg,
+                                processing_time_ms=int((time.time() - start_time) * 1000),
+                                action_type=action_type
+                            )
+                        except Exception as log_error:
+                            pass
+                    
+                    return jsonify({
+                        "success": False,
+                        "message": error_msg
+                    }), 404, response_headers
+                    
+            except Exception as e:
+                processing_time_ms = int((time.time() - start_time) * 1000)
+                error_msg = f"Error deleting event: {str(e)}"
                 
                 if prompt_log_id:
                     try:
@@ -639,7 +724,6 @@ def login():
 @app.route('/auth/callback')
 def auth_callback():
     try:
-        
         code = request.args.get('code')
         if not code:
             return redirect(f"{frontend_url}/login?error=no_code")
@@ -852,6 +936,15 @@ def api_logout():
         })
         response.headers['Content-Type'] = 'application/json'
         return response, 500
+
+@app.route('/ping')
+def ping():
+    return {
+        'status': 'healthy',
+        'timestamp': datetime.now().isoformat(),
+        'uptime': time.time() - start_time,
+        'status_code ' : 200
+    }
 
 @app.after_request
 def after_request(response):
@@ -1229,14 +1322,7 @@ def get_all_prompts():
     except Exception as e:
         return jsonify({"error": "Failed to retrieve prompts"}), 500
 
-@app.route('/ping')
-def ping():
-    return {
-        'status': 'healthy',
-        'timestamp': datetime.now().isoformat(),
-        'uptime': time.time() - start_time,
-        'status_code ' : 200
-    }
+
 
 class PromptEncryptor:
     def __init__(self):

@@ -1,16 +1,12 @@
 import os
-import flask
-import os.path
 import datetime
-import pytz  # Add this import at the top
-
+import pytz
+import socket
 from openai import OpenAI
 from dotenv import load_dotenv
-
 import json
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
@@ -19,17 +15,8 @@ load_dotenv()
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
 
-app = flask.Flask(__name__)
-
-creds = None
-service = None
-calendarId = None
-
-
-
-
-def calendarAuth():
-    session = flask.session
+def calendarAuth(session):
+    """Authenticate using tokens from Flask session"""
     if not session or 'tokens' not in session:
         raise Exception("Authentication required. Please log in through the web interface.")
 
@@ -54,31 +41,14 @@ def calendarAuth():
 
     return creds
 
-"""
 
-def deleteEvent(date, title, start, end, calendarId='primary'):
-    try:
-        global service
-        global creds
-        calendarAuth()
-        service = build('calendar', 'v3', credentials=creds)
-        event = service.events().delete(calendarId=calendarId, eventId=eventId).execute()
-        return True
-    except Exception as e:
-        print(f"Error in deleteEvent: {e}")
-        return False
-"""
-
-
-    
-
-def createEvent(summary, description, start_iso, end_iso=None, calendar_id="primary", user_tz="UTC"):
+def createEvent(session, summary, description, start_iso, end_iso=None, calendar_id="primary", user_tz="UTC"):
     """
     Create a Google Calendar event using exactly the user's IANA timezone (user_tz).
     - `start_iso` and `end_iso` must already be full ISO‐8601 strings with offset (e.g. "2025-06-02T17:00:00+02:00").
     - `user_tz` is something like "Europe/Paris" or "America/Los_Angeles".
     """
-    creds = calendarAuth()  # Always get creds from session
+    creds = calendarAuth(session)
     service = build("calendar", "v3", credentials=creds)
 
     if not summary or not start_iso:
@@ -86,10 +56,10 @@ def createEvent(summary, description, start_iso, end_iso=None, calendar_id="prim
         return False
 
     try:
-        # Now that ChatGPT has given us a full ISO‐8601 with offset in start_iso,
-        # we can parse it into a tz-aware datetime:
+        # Parse the full ISO‐8601 with offset in start_iso
         start_dt = datetime.datetime.fromisoformat(start_iso)
-        # If end_iso is omitted, default to 1 hour after:
+        
+        # If end_iso is omitted, default to 1 hour after
         if not end_iso or end_iso == "":
             end_dt = start_dt + datetime.timedelta(hours=1)
             end_iso = end_dt.isoformat()
@@ -104,13 +74,13 @@ def createEvent(summary, description, start_iso, end_iso=None, calendar_id="prim
         print(f"Invalid datetime format: {e}")
         return False
 
-    # Use the USER'S timezone (user_tz), not server's. Do NOT compute server‐side tz anymore.
+    # Use the USER'S timezone (user_tz), not server's
     event_body = {
         "summary": summary,
         "description": description or "",
         "start": {
-            "dateTime": start_iso,   # e.g. "2025-06-02T17:00:00+02:00"
-            "timeZone": user_tz,     # e.g. "Europe/Paris"
+            "dateTime": start_iso,
+            "timeZone": user_tz,
         },
         "end": {
             "dateTime": end_iso,
@@ -120,9 +90,7 @@ def createEvent(summary, description, start_iso, end_iso=None, calendar_id="prim
 
     print(f"Event object being sent to Google: {event_body}")
 
-    # Retry logic for timeouts, etc.
-    import socket
-
+    # Retry logic for timeouts
     original_timeout = socket.getdefaulttimeout()
     socket.setdefaulttimeout(30)
     max_retries = 3
@@ -154,62 +122,88 @@ def createEvent(summary, description, start_iso, end_iso=None, calendar_id="prim
     return False
 
 
-def getEvents(calendarId='primary', day=None):
+def getEvents(session, calendarId='primary', day=None):
+    """Get calendar events"""
     if day is None:
-        # Initialize to the current UTC time if no day is provided
         day = datetime.datetime.now(datetime.timezone.utc).isoformat()
-       
-    events_result = (
-        service.events()
-        .list(
-            calendarId="primary",
-            timeMin=day,
-            maxResults=10,
-            singleEvents=True,
-            orderBy="startTime",
-        )
-        .execute()
-    )
-
-def intializeDiffCalendarID(calId):
-   try:
-      global calendarId
-      calendar_list = service.calendarList().list().execute()
-      for calendar in calendar_list.get('items'):
-        if calendar.get('id') == calId:
-            calendarId = calId
-            break
-                
-   except Exception as e:
-      print(f'Calendar ID not found: {e}')
-      raise e
+    
+    creds = calendarAuth(session)
+    service = build("calendar", "v3", credentials=creds)
+    
+    events_result = service.events().list(
+        calendarId=calendarId,
+        timeMin=day,
+        maxResults=10,
+        singleEvents=True,
+        orderBy="startTime",
+    ).execute()
+    
+    return events_result.get('items', [])
 
 
-def askPrompt():
-    input_prompt = input("What's coming up next?': ")
-    return input_prompt
+def validateCalendarId(session, calId):
+    """Validate if a calendar ID exists for the user"""
+    try:
+        creds = calendarAuth(session)
+        service = build("calendar", "v3", credentials=creds)
+        
+        calendar_list = service.calendarList().list().execute()
+        for calendar in calendar_list.get('items', []):
+            if calendar.get('id') == calId:
+                return calId
+        
+        raise ValueError(f'Calendar ID {calId} not found')
+    except Exception as e:
+        print(f'Error validating calendar: {e}')
+        raise
 
 
+def deleteEvent(session, eventId, calendarId='primary'):
+    """Delete a calendar event"""
+    try:
+        creds = calendarAuth(session)
+        service = build('calendar', 'v3', credentials=creds)
+        service.events().delete(calendarId=calendarId, eventId=eventId).execute()
+        return {
+            "success": True,
+            "message": "Event deleted successfully"
+        }
+    except HttpError as e:
+        if e.resp.status == 404:
+            return {
+                "success": False,
+                "message": "Event not found",
+                "error": "Event not found"
+            }
+        return {
+            "success": False,
+            "message": "Failed to delete event",
+            "error": str(e)
+        }
+    except Exception as e:
+        print(f"Error in deleteEvent: {e}")
+        return {
+            "success": False,
+            "message": "Error deleting event",
+            "error": str(e)
+        }
 
 
 def promptToEvent(prompt, user_tz):
+    """Convert natural language prompt to event parameters using OpenAI"""
     try:
-        # Initialize OpenAI client with minimal configuration
         client = OpenAI(
             api_key=os.getenv('openai_key_v3'),
-            base_url="https://api.openai.com/v1"  # Explicitly set the base URL
+            base_url="https://api.openai.com/v1"
         )
         
         # Get current date and timezone for reference
-        
-        
-
         zone = pytz.timezone(user_tz)
         now_local = datetime.datetime.now(zone)
-        today_str = now_local.strftime("%Y-%m-%d")           # e.g. "2025-06-01"
-        time_str  = now_local.strftime("%H:%M:%S")           # e.g. "14:23:45"
-        tz_offset = now_local.strftime("%z")                 # e.g. "-0700"
-        # Insert the colon so GPT sees "-07:00":
+        today_str = now_local.strftime("%Y-%m-%d")
+        time_str = now_local.strftime("%H:%M:%S")
+        tz_offset = now_local.strftime("%z")
+        # Insert the colon so GPT sees "-07:00"
         tz_offset = f"{tz_offset[:3]}:{tz_offset[3:]}"
         
         print(f"Local timezone offset: {tz_offset}")
@@ -280,6 +274,7 @@ def promptToEvent(prompt, user_tz):
         
         User input: {prompt}
         """
+        
         response = client.chat.completions.create(
             model="gpt-4",
             messages=[{"role": "user", "content": modified_prompt}]
@@ -297,7 +292,6 @@ def promptToEvent(prompt, user_tz):
         
         # Strip markdown code block formatting if present
         if "```" in content:
-            # Remove all occurrences of ```json or ``` from the content
             content = content.replace("```json", "").replace("```", "").strip()
         
         # Add error handling for JSON parsing
@@ -306,7 +300,6 @@ def promptToEvent(prompt, user_tz):
         except json.JSONDecodeError as e:
             print(f"JSON parsing error: {e}")
             print(f"Raw response after stripping: {content}")
-            # Return a structured error response
             return {
                 "error": "Invalid JSON response from ChatGPT",
                 "raw_response": content
@@ -318,9 +311,10 @@ def promptToEvent(prompt, user_tz):
             "message": "An error occurred while processing the prompt"
         }
 
-def formatEvent(event):
+
+def formatEvent(event, session):
+    """Format and create an event with session context"""
     try:
-        # Print the event data for debugging
         print(f"Event data received: {event}")
         print(f"Event data type: {type(event)}")
         
@@ -339,17 +333,27 @@ def formatEvent(event):
         description = event['description']
         start = event['start']
         end = event['end']
-        calendarId = event.get('calendarId', 'primary')  # Use get with default value
+        calendarId = event.get('calendarId', 'primary')
+        user_tz = event.get('timeZone', 'UTC')  # Get timezone from event data
         
-        # Print the extracted values for debugging
         print(f"Summary: {summary}")
         print(f"Description: {description}")
         print(f"Start: {start}")
         print(f"End: {end}")
         print(f"CalendarId: {calendarId}")
+        print(f"TimeZone: {user_tz}")
         
         try:
-            result = createEvent(summary, description, start, end, calendarId)
+            result = createEvent(
+                session=session,
+                summary=summary,
+                description=description,
+                start_iso=start,
+                end_iso=end,
+                calendar_id=calendarId,
+                user_tz=user_tz
+            )
+            
             if result:
                 return {
                     "success": True,
@@ -380,13 +384,15 @@ def formatEvent(event):
     except Exception as e:
         print(f"Error in formatEvent: {str(e)}")
         import traceback
-        traceback.print_exc()  # Print the full stack trace
+        traceback.print_exc()
         return {
             "success": False,
             "message": "Error formatting event",
             "error": str(e)
         }
-def findEvent(query_details, user_tz):
+
+
+def findEvent(session, query_details, user_tz):
     """
     Finds events based on provided criteria in the user's timezone.
     - query_details may include:
@@ -397,15 +403,15 @@ def findEvent(query_details, user_tz):
         - calendarId: string (defaults to "primary")
     - user_tz is the user's IANA timezone (e.g. "America/Los_Angeles").
     """
-    creds = calendarAuth()  # Always get creds from session
+    creds = calendarAuth(session)
     service = build("calendar", "v3", credentials=creds)
 
     # Safely pull out fields
-    date_str    = query_details.get("date", None)       # "YYYY-MM-DD"
-    title       = query_details.get("title", None)
-    start_iso   = query_details.get("start", None)      # "2025-06-02T17:00:00+02:00"
-    end_iso     = query_details.get("end", None)
-    cal_id      = query_details.get("calendarId", "primary")
+    date_str = query_details.get("date", None)
+    title = query_details.get("title", None)
+    start_iso = query_details.get("start", None)
+    end_iso = query_details.get("end", None)
+    cal_id = query_details.get("calendarId", "primary")
 
     try:
         tz = pytz.timezone(user_tz)
@@ -414,7 +420,6 @@ def findEvent(query_details, user_tz):
 
         # 1) If full ISO start is provided, convert from that zone to UTC
         if start_iso:
-            # This will parse the offset inside start_iso, e.g. "+02:00", then convert to UTC
             start_dt_utc = datetime.datetime.fromisoformat(start_iso).astimezone(datetime.timezone.utc)
             timeMin = start_dt_utc.isoformat()
 
@@ -422,14 +427,11 @@ def findEvent(query_details, user_tz):
                 end_dt_utc = datetime.datetime.fromisoformat(end_iso).astimezone(datetime.timezone.utc)
                 timeMax = end_dt_utc.isoformat()
             elif date_str:
-                # If they gave a date and a start, interpret date in user_tz, then set timeMax to end of that local day
                 date_local = datetime.datetime.fromisoformat(date_str).date()
-                # midnight at user's timezone
                 start_of_day_local = tz.localize(datetime.datetime.combine(date_local, datetime.time.min))
-                end_of_day_local   = tz.localize(datetime.datetime.combine(date_local, datetime.time.max))
+                end_of_day_local = tz.localize(datetime.datetime.combine(date_local, datetime.time.max))
                 timeMax = end_of_day_local.astimezone(datetime.timezone.utc).isoformat()
             else:
-                # If no end but start given, set timeMax to end of that same local date
                 local_date = start_dt_utc.astimezone(tz).date()
                 end_of_day_local = tz.localize(datetime.datetime.combine(local_date, datetime.time.max))
                 timeMax = end_of_day_local.astimezone(datetime.timezone.utc).isoformat()
@@ -438,7 +440,7 @@ def findEvent(query_details, user_tz):
         elif date_str:
             date_local = datetime.datetime.fromisoformat(date_str).date()
             start_of_day_local = tz.localize(datetime.datetime.combine(date_local, datetime.time.min))
-            end_of_day_local   = tz.localize(datetime.datetime.combine(date_local, datetime.time.max))
+            end_of_day_local = tz.localize(datetime.datetime.combine(date_local, datetime.time.max))
             timeMin = start_of_day_local.astimezone(datetime.timezone.utc).isoformat()
             timeMax = end_of_day_local.astimezone(datetime.timezone.utc).isoformat()
 
@@ -447,11 +449,11 @@ def findEvent(query_details, user_tz):
             now_local = datetime.datetime.now(tz)
             today_local = now_local.date()
             start_of_day_local = tz.localize(datetime.datetime.combine(today_local, datetime.time.min))
-            end_of_day_local   = tz.localize(datetime.datetime.combine(today_local, datetime.time.max))
+            end_of_day_local = tz.localize(datetime.datetime.combine(today_local, datetime.time.max))
             timeMin = start_of_day_local.astimezone(datetime.timezone.utc).isoformat()
             timeMax = end_of_day_local.astimezone(datetime.timezone.utc).isoformat()
 
-        # Build the query parameters for Google Calendar (all times must be in UTC for the API)
+        # Build the query parameters for Google Calendar
         params = {
             "calendarId": cal_id,
             "timeMin": timeMin,
@@ -477,12 +479,12 @@ def findEvent(query_details, user_tz):
         formatted_events = []
         for ev in events:
             formatted_events.append({
+                "id": ev.get("id"),  # Include event ID for deletion
                 "summary": ev.get("summary", "No title"),
                 "description": ev.get("description", "No description"),
-                # These are returned in the event's own timezone, so just relay them as-is
                 "start": ev.get("start", {}).get("dateTime", ev.get("start", {}).get("date", "No start time")),
-                "end":   ev.get("end", {}).get("dateTime", ev.get("end", {}).get("date", "No end time")),
-                "link":  ev.get("htmlLink", "No link available")
+                "end": ev.get("end", {}).get("dateTime", ev.get("end", {}).get("date", "No end time")),
+                "link": ev.get("htmlLink", "No link available")
             })
 
         return {
@@ -505,6 +507,4 @@ def findEvent(query_details, user_tz):
             "message": "Failed to retrieve events",
             "error": str(e)
         }
-   
-def main():
-    calendarAuth()
+    
