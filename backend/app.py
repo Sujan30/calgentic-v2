@@ -44,14 +44,13 @@ frontend_url = os.getenv('frontend_url', 'http://localhost:8080')
 app.config['SESSION_TYPE'] = 'filesystem'
 app.config['SESSION_PERMANENT'] = True
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=5)
-app.config['SESSION_COOKIE_SECURE'] = True
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_PATH'] = '/'
 app.config['SESSION_COOKIE_NAME'] = 'calgentic_session'
 
 # Set cookie domain and SameSite based on environment
 if environment == 'production':
-    app.config['SESSION_COOKIE_DOMAIN'] = '.calgentic.onrender.com'
+    app.config['SESSION_COOKIE_DOMAIN'] = '.calgentic.com'
     app.config['SESSION_COOKIE_SAMESITE'] = 'None'
     app.config['SESSION_COOKIE_SECURE'] = True
 
@@ -59,6 +58,7 @@ else:
     # For development, don't set domain (defaults to current domain)
     app.config['SESSION_COOKIE_DOMAIN'] = None
     app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+    app.config['SESSION_COOKIE_SECURE'] = False
 
 # Initialize Flask-Session
 Session(app)
@@ -265,6 +265,8 @@ def onboard():
             "https://calgentic.com",
             "https://www.calgentic.com",
             "https://calgentic.onrender.com",
+            "https://api.calgentic.com",
+            "https://www.api.calgentic.com"
         ]
         response.headers["Access-Control-Allow-Origin"] = (
             origin if origin in allowed_origins else allowed_origins[0]
@@ -864,6 +866,8 @@ def after_request(response):
         "https://calgentic.com",
         "https://www.calgentic.com",
         "https://calgentic.onrender.com",
+        "https://api.calgentic.com",
+        "https://www.api.calgentic.com"
     ]
     
     if origin in allowed_origins:
