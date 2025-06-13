@@ -295,6 +295,7 @@ def onboard():
         "Access-Control-Expose-Headers": "Content-Type, Authorization",
     }
 
+    tokens = require_tokens()
     try:
         data = request.get_json()
 
@@ -302,7 +303,6 @@ def onboard():
         user_session = session.get("user")
         user_email = user_session.get('email') if user_session else "anonymous"
         user_id = user_session.get('db_user_id') if user_session else None
-        tokens = require_tokens()
         # Only log if user is authenticated (has valid user_id)
         should_log = user_email != "anonymous" and user_id is not None
         
@@ -599,7 +599,7 @@ def onboard():
                     # Delete the first matching event
                     event_to_delete = find_result["events"][0]
                     delete_result, refreshed_tokens = main.deleteEvent(
-                        session=tokens,
+                        token_info=tokens,
                         eventId=event_to_delete.get("id"),
                         calendarId=query_details.get("calendarId", "primary")
                     )

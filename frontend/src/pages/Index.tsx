@@ -166,7 +166,7 @@ const Index = () => {
                 </span>
                 <span className="glass px-3 py-1 cursor-pointer hover:bg-white/20 dark:hover:bg-black/40 transition"
                   onClick={() => handlePromptSubmit("Find a free time slot next week")}>
-                  "Create a meeting with sujan for next monday at 10am"
+                  "I have a meeting with sujan for next monday at 10am"
                 </span>
               </div>
             )}

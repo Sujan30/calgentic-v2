@@ -398,7 +398,7 @@ def formatEvent(token_info: Dict[str, Any], event: Dict[str, Any]) -> Tuple[Dict
 
 
 
-def findEvent(session, query_details, user_tz):
+def findEvent(token_info: Dict[str, Any], query_details: dict, user_tz: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
     Finds events based on provided criteria in the user's timezone.
     - query_details may include:
@@ -408,18 +408,19 @@ def findEvent(session, query_details, user_tz):
         - end:        full ISO-8601 string with offset
         - calendarId: string (defaults to "primary")
     - user_tz is the user's IANA timezone (e.g. "America/Los_Angeles").
+    Returns (result_dict, updated_token_info)
     """
-    creds = calendarAuth(session)
-    service = build("calendar", "v3", credentials=creds)
-
-    # Safely pull out fields
-    date_str = query_details.get("date", None)
-    title = query_details.get("title", None)
-    start_iso = query_details.get("start", None)
-    end_iso = query_details.get("end", None)
-    cal_id = query_details.get("calendarId", "primary")
-
     try:
+        creds = _calendar_auth(token_info)
+        service = build("calendar", "v3", credentials=creds)
+
+        # Safely pull out fields
+        date_str = query_details.get("date", None)
+        title = query_details.get("title", None)
+        start_iso = query_details.get("start", None)
+        end_iso = query_details.get("end", None)
+        cal_id = query_details.get("calendarId", "primary")
+
         tz = pytz.timezone(user_tz)
         timeMin = None
         timeMax = None
@@ -476,11 +477,11 @@ def findEvent(session, query_details, user_tz):
         events = events_result.get("items", [])
 
         if not events:
-            return {
+            return ({
                 "success": True,
                 "message": "No events found for the specified criteria.",
                 "events": []
-            }
+            }, token_info)
 
         formatted_events = []
         for ev in events:
@@ -493,24 +494,24 @@ def findEvent(session, query_details, user_tz):
                 "link": ev.get("htmlLink", "No link available")
             })
 
-        return {
+        return ({
             "success": True,
             "message": f"Found {len(formatted_events)} events.",
             "events": formatted_events
-        }
+        }, token_info)
 
     except HttpError as error:
         print(f"An error occurred: {error}")
-        return {
+        return ({
             "success": False,
             "message": "Failed to retrieve events",
             "error": str(error)
-        }
+        }, token_info)
     except Exception as e:
         print(f"Unexpected error: {e}")
-        return {
+        return ({
             "success": False,
             "message": "Failed to retrieve events",
             "error": str(e)
-        }
+        }, token_info)
     
