@@ -31,19 +31,69 @@ export const useVoiceInput = ({ onTranscription, isAuthenticated }: UseVoiceInpu
       setIsLoading(true);
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach(track => track.stop());
-
+      
+      const mediaRecorder = new MediaRecorder(stream, {
+        mimeType: 'audio/webm;codecs=opus'
+      });
+      
+      const audioChunks: Blob[] = [];
+      
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunks.push(event.data);
+        }
+      };
+      
+      mediaRecorder.onstop = async () => {
+        stream.getTracks().forEach(track => track.stop());
+        
+        const audioBlob = new Blob(audioChunks, { type: 'audio/webm;codecs=opus' });
+        const reader = new FileReader();
+        
+        reader.onloadend = async () => {
+          try {
+            const base64Audio = (reader.result as string).split(',')[1];
+            
+            const response = await fetch('/api/transcribe', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              credentials: 'include',
+              body: JSON.stringify({
+                audioData: base64Audio,
+                audioFormat: 'WEBM_OPUS'
+              })
+            });
+            
+            const result = await response.json();
+            
+            if (response.ok && result.transcription) {
+              onTranscription(result.transcription);
+            } else {
+              setError(result.error || 'Transcription failed');
+              toast.error(result.error || 'Transcription failed');
+            }
+          } catch (err) {
+            setError('Failed to process transcription');
+            toast.error('Failed to process transcription');
+          } finally {
+            setIsLoading(false);
+          }
+        };
+        
+        reader.readAsDataURL(audioBlob);
+      };
+      
+      recognitionRef.current = mediaRecorder;
       setIsListening(true);
       setIsLoading(false);
       
-      setTimeout(() => {
-        const mockTranscription = "Schedule a meeting tomorrow at 2pm";
-        onTranscription(mockTranscription);
-        stopListening();
-      }, 3000);
-
+      mediaRecorder.start();
+      
     } catch (err) {
       setIsLoading(false);
+      
       if (err instanceof Error && err.name === 'NotAllowedError') {
         setError('Microphone access denied. Please allow microphone permissions.');
         toast.error('Microphone access denied. Please allow microphone permissions.');
@@ -56,8 +106,7 @@ export const useVoiceInput = ({ onTranscription, isAuthenticated }: UseVoiceInpu
 
   const stopListening = useCallback(() => {
     setIsListening(false);
-    setIsLoading(false);
-    if (recognitionRef.current) {
+    if (recognitionRef.current && recognitionRef.current.state !== 'inactive') {
       recognitionRef.current.stop();
     }
   }, []);

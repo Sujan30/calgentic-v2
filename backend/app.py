@@ -15,6 +15,7 @@ import uuid
 from supabase import create_client, Client
 from cryptography.fernet import Fernet
 import base64
+from speech_service import SpeechTranscriptionService
 from redis import Redis
 #hello world
 
@@ -1339,6 +1340,73 @@ def get_all_prompts():
     except Exception as e:
         return jsonify({"error": "Failed to retrieve prompts"}), 500
 
+
+# Initialize speech service
+speech_service = SpeechTranscriptionService()
+
+@app.route("/api/transcribe", methods=["POST", "OPTIONS"])
+def transcribe_audio():
+    if request.method == "OPTIONS":
+        response = app.make_default_options_response()
+        origin = request.headers.get("Origin", "")
+        allowed_origins = [
+            "http://localhost:8080",
+            "http://127.0.0.1:8080",
+            "http://localhost:8081",
+            "http://127.0.0.1:8081",
+            "http://localhost:5001",
+            "http://127.0.0.1:5001",
+            "https://calgentic.com",
+            "https://www.calgentic.com",
+            "https://calgentic.onrender.com",
+            "https://api.calgentic.com",
+            "https://www.api.calgentic.com"
+        ]
+        response.headers["Access-Control-Allow-Origin"] = (
+            origin if origin in allowed_origins else allowed_origins[0]
+        )
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, Accept"
+        response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Max-Age"] = "3600"
+        return response
+
+    response_headers = {
+        "Access-Control-Allow-Origin": request.headers.get("Origin", "https://calgentic.com"),
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept",
+        "Access-Control-Expose-Headers": "Content-Type, Authorization",
+    }
+
+    tokens = require_tokens()
+    
+    try:
+        data = request.get_json()
+        
+        if not data or "audioData" not in data:
+            return jsonify({"error": "Request body must include 'audioData' field"}), 400, response_headers
+        
+        audio_data_base64 = data["audioData"]
+        audio_format = data.get("audioFormat", "WEBM_OPUS")
+        
+        if not audio_data_base64:
+            return jsonify({"error": "Audio data cannot be empty"}), 400, response_headers
+        
+        result = speech_service.transcribe_audio(audio_data_base64, audio_format)
+        
+        if result["success"]:
+            return jsonify({
+                "transcription": result["transcription"],
+                "confidence": result["confidence"],
+                "message": result["message"]
+            }), 200, response_headers
+        else:
+            return jsonify({"error": result["error"]}), 400, response_headers
+            
+    except Exception as e:
+        print(f"Transcription endpoint error: {e}")
+        return jsonify({"error": "Internal server error during transcription"}), 500, response_headers
 
 
 class PromptEncryptor:
