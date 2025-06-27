@@ -9,6 +9,7 @@ cryptography==45.0.4
 google-auth-oauthlib==1.2.0
 google-auth-httplib2==0.2.0
 google-api-python-client==2.118.0
+google-cloud-speech==2.21.0
 
 # OpenAI
 openai==1.82.0
