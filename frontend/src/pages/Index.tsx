@@ -145,6 +145,7 @@ const Index = () => {
               placeholder='Try "Schedule a meeting with John at 3 PM tomorrow" or "What events do I have this week?"'
               onSubmit={handlePromptSubmit}
               isLoading={isLoading}
+              isAuthenticated={isAuthenticated}
             />
             
             {!isAuthenticated && !authLoading && (

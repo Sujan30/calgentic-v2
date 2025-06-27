@@ -352,6 +352,7 @@ const Dashboard = () => {
                   placeholder='Try "Schedule a meeting with John at 3 PM tomorrow"'
                   onSubmit={handlePromptSubmit}
                   isLoading={isLoading}
+                  isAuthenticated={isAuthenticated}
                 />
                 
                 {!response && !isLoading && (
@@ -534,4 +535,4 @@ const Dashboard = () => {
   );
 };
 
-export default Dashboard; 
+export default Dashboard;  
