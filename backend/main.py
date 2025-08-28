@@ -184,38 +184,119 @@ def validateCalendarId(token_info: Dict[str, Any], calId: str) -> Tuple[str, Dic
     raise ValueError(f'Calendar ID {calId} not found')
 
 
-def deleteEvent(token_info: Dict[str, Any], eventId: str, calendarId: str = 'primary') -> Tuple[Dict[str, Any], Dict[str, Any]]:
+def deleteEvent(token_info: Dict[str, Any], eventId: str, calendarId: str = 'primary', max_retries: int = 3) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
-    Delete a calendar event.
+    Delete a calendar event with retry logic for scalability.
     Returns (response_dict, updated_token_info).
     """
-    try:
-        creds = _calendar_auth(token_info)
-        service = build('calendar', 'v3', credentials=creds)
-        service.events().delete(calendarId=calendarId, eventId=eventId).execute()
-        return ({
-            "success": True,
-            "message": "Event deleted successfully"
-        }, token_info)
-    except HttpError as e:
-        if e.resp.status == 404:
+    import time
+    import random
+    
+    logging.info(f"DELETE_EVENT: Starting deletion for eventId={eventId}, calendarId={calendarId}")
+    
+    for attempt in range(max_retries):
+        try:
+            logging.info(f"DELETE_EVENT: Attempt {attempt + 1} of {max_retries}")
+            creds = _calendar_auth(token_info)
+            service = build('calendar', 'v3', credentials=creds)
+            
+            # Add timeout for better reliability
+            original_timeout = socket.getdefaulttimeout()
+            socket.setdefaulttimeout(30)
+            
+            logging.info(f"DELETE_EVENT: Calling Google Calendar API delete for event {eventId}")
+            service.events().delete(calendarId=calendarId, eventId=eventId).execute()
+            
+            socket.setdefaulttimeout(original_timeout)
+            logging.info(f"DELETE_EVENT: Event {eventId} deleted successfully on attempt {attempt + 1}")
+            
             return ({
-                "success": False,
-                "message": "Event not found",
-                "error": "Event not found"
+                "success": True,
+                "message": "Event deleted successfully",
+                "eventId": eventId,
+                "calendarId": calendarId
             }, token_info)
-        return ({
-            "success": False,
-            "message": "Failed to delete event",
-            "error": str(e)
-        }, token_info)
-    except Exception as e:
-        logging.error(f"Error in deleteEvent: {e}")
-        return ({
-            "success": False,
-            "message": "Error deleting event",
-            "error": str(e)
-        }, token_info)
+            
+        except HttpError as e:
+            socket.setdefaulttimeout(original_timeout)
+            
+            if e.resp.status == 404:
+                return ({
+                    "success": False,
+                    "message": "Event not found",
+                    "error": "Event not found",
+                    "eventId": eventId
+                }, token_info)
+            elif e.resp.status == 429:  # Rate limit exceeded
+                if attempt < max_retries - 1:
+                    # Exponential backoff with jitter
+                    wait_time = (2 ** attempt) + random.uniform(0, 1)
+                    logging.warning(f"Rate limit hit, retrying in {wait_time:.2f}s (attempt {attempt + 1})")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    return ({
+                        "success": False,
+                        "message": "Rate limit exceeded. Please try again later.",
+                        "error": "Rate limit exceeded"
+                    }, token_info)
+            elif e.resp.status >= 500:  # Server errors
+                if attempt < max_retries - 1:
+                    wait_time = (2 ** attempt) + random.uniform(0, 1)
+                    logging.warning(f"Server error, retrying in {wait_time:.2f}s (attempt {attempt + 1})")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    return ({
+                        "success": False,
+                        "message": "Server error. Please try again later.",
+                        "error": str(e)
+                    }, token_info)
+            else:
+                return ({
+                    "success": False,
+                    "message": "Failed to delete event",
+                    "error": str(e),
+                    "eventId": eventId
+                }, token_info)
+                
+        except socket.timeout:
+            socket.setdefaulttimeout(original_timeout)
+            if attempt < max_retries - 1:
+                wait_time = (2 ** attempt) + random.uniform(0, 1)
+                logging.warning(f"Request timeout, retrying in {wait_time:.2f}s (attempt {attempt + 1})")
+                time.sleep(wait_time)
+                continue
+            else:
+                return ({
+                    "success": False,
+                    "message": "Request timeout. Please try again later.",
+                    "error": "Timeout"
+                }, token_info)
+                
+        except Exception as e:
+            socket.setdefaulttimeout(original_timeout)
+            logging.error(f"Error in deleteEvent (attempt {attempt + 1}): {e}")
+            
+            if attempt < max_retries - 1:
+                wait_time = (2 ** attempt) + random.uniform(0, 1)
+                logging.warning(f"Unexpected error, retrying in {wait_time:.2f}s")
+                time.sleep(wait_time)
+                continue
+            else:
+                return ({
+                    "success": False,
+                    "message": "Error deleting event",
+                    "error": str(e),
+                    "eventId": eventId
+                }, token_info)
+    
+    # This shouldn't be reached, but just in case
+    return ({
+        "success": False,
+        "message": "Max retries exceeded",
+        "error": "Max retries exceeded"
+    }, token_info)
 
 
 def promptToEvent(prompt, user_tz):
@@ -238,11 +319,10 @@ def promptToEvent(prompt, user_tz):
         print(f"Local timezone offset: {tz_offset}")
         
         modified_prompt = f"""
-        You are a calendar assistant. Given the user's input, determine if they want to create a new event or view existing events.
+        You are a calendar assistant. Given the user's input, determine if they want to create a new event, view existing events, or delete events.
         
         Today's date is {today_str} in the timezone {time_str} in the time zone {tz_offset} which is the users time zone as {user_tz}
         When interpreting "tomorrow at 5pm", interpret "5pm" in exactly {user_tz} (including DST).  
-        If they want to create an event, return raw JSON only:
         
         When interpreting dates and times:
         - For relative dates like "tomorrow", "next week", etc., calculate the actual date based on today's date.
@@ -251,10 +331,34 @@ def promptToEvent(prompt, user_tz):
         - When a user specifies a time (like 9 AM), use that EXACT time. Do not adjust for any timezone differences.
         - Use the user's local timezone offset of {tz_offset} in the output.
         
-        - If they want to create an event, return the following JSON structure:
-        - factor in the timezone offset in the output, including daylight savings time, so if a user says 6 pm before DST, it should still schedule it for 6pm not for 7pm
-          
-          {{
+        ## BATCH OPERATION RECOGNITION
+        Recognize batch operations (multiple events) vs single operations:
+        
+        ### BATCH DELETE INDICATORS:
+        - "clear", "delete everything", "remove all", "cancel all"
+        - "clear my calendar for today" → BATCH (all events today)
+        - "delete everything tomorrow" → BATCH (all events tomorrow)  
+        - "remove all meetings with John" → BATCH (all matching events)
+        - "cancel my morning meetings" → BATCH (all morning events)
+        - "clear my schedule for this week" → BATCH (all week events)
+        
+        ### SINGLE DELETE INDICATORS:
+        - "cancel my meeting at 5pm" → SINGLE (specific time)
+        - "delete the lunch appointment" → SINGLE (specific event)
+        - "remove my call with Sarah" → SINGLE (specific person/event)
+        
+        ### BATCH CREATE INDICATORS:
+        - "daily", "every", "weekly", "recurring", "all week", "multiple"
+        - "Schedule daily standups at 9am this week" → BATCH (5 events)
+        - "Add lunch breaks at 12pm every weekday" → BATCH (multiple events)
+        - "Block my calendar for vacation Monday to Friday" → BATCH (5 all-day events)
+        - "Create meetings with team every Tuesday at 3pm" → BATCH (recurring)
+        
+        ## ACTION TYPES:
+        
+        ### SINGLE CREATE EVENT:
+        - Factor in the timezone offset in the output, including daylight savings time
+        {{
             "action_type": "create",
             "eventParams": [
               {{
@@ -265,41 +369,91 @@ def promptToEvent(prompt, user_tz):
                 "calendarId": "primary"
               }}
             ],
-            "eventCompletion" : "A little summary about the event, that acts as a confirmation"
+            "eventCompletion" : "A confirmation message about the event"
           }}
-          
         
-        - If they want to view an event, return:
-            - At least one of the following fields must be included: `date`, `title`, `start`, `end`, `calendarId`.
-          {{
+        ### BATCH CREATE EVENTS:
+        - For multiple events creation (daily, weekly, recurring, etc.)
+        {{
+            "action_type": "batch_create",
+            "batch_type": "recurring|range|multiple",
+            "eventParams": [
+              {{
+                "summary": "Event title",
+                "description": "Event details",
+                "start": "YYYY-MM-DDTHH:MM:SS{tz_offset}",
+                "end": "YYYY-MM-DDTHH:MM:SS{tz_offset}",
+                "calendarId": "primary"
+              }},
+              {{
+                "summary": "Event title 2",
+                "description": "Event details",
+                "start": "YYYY-MM-DDTHH:MM:SS{tz_offset}",
+                "end": "YYYY-MM-DDTHH:MM:SS{tz_offset}",
+                "calendarId": "primary"
+              }}
+            ],
+            "estimated_count": 5,
+            "confirmation_required": true,
+            "eventCompletion": "Creating X events as requested"
+          }}
+        
+        ### VIEW EVENT:
+        - At least one of the following fields must be included: `date`, `title`, `start`, `end`, `calendarId`
+        {{
             "action_type": "view",
             "query_details": {{
-                "date" : "date of the event they want to view",
-                "title" : "title of the event they want to view",
-                "start": "YYYY-MM-DDTHH:MM:SS{tz_offset}",
-                "end": "YYYY-MM-DDTHH:MM:SS{tz_offset}",
+                "date" : "YYYY-MM-DD (if specific date mentioned)",
+                "title" : "event title or keywords to search",
+                "start": "YYYY-MM-DDTHH:MM:SS{tz_offset} (if specific time mentioned)",
+                "end": "YYYY-MM-DDTHH:MM:SS{tz_offset} (if end time mentioned)",
                 "calendarId": "primary"
             }}
           }}
-          - If they want to delete an event
-            - atleast one of the following fields must be included: `date`, `title`, `start`, `end`
-            - if calendarID is provided, then change the calendarID to the one provided, else assume it is primary
-            -if only calendarID is provided, then don't do anything. 
-            return the following JSON structure:
-          {{
+        
+        ### SINGLE DELETE EVENT:
+        - For deleting one specific event
+        {{
             "action_type": "delete",
             "query_details": {{
-                "date" : "date of the event they want to view",
-                "title" : "title of the event they want to view",
-                "start": "YYYY-MM-DDTHH:MM:SS{tz_offset}",
-                "end": "YYYY-MM-DDTHH:MM:SS{tz_offset}",
+                "date" : "YYYY-MM-DD (if date mentioned or can be inferred)",
+                "title" : "event title or keywords to match",
+                "start": "YYYY-MM-DDTHH:MM:SS{tz_offset} (if time mentioned)",
+                "end": "YYYY-MM-DDTHH:MM:SS{tz_offset} (if end time mentioned)",
                 "calendarId": "primary"
-            }}
+            }},
+            "confidence": "high|medium|low",
+            "confirmation_message": "Event matching '[criteria]' will be deleted"
           }}
         
-        Ensure the response is **valid JSON format**. Do not include markdown formatting like ```json at the beginning or ``` at the end. Just return the raw JSON.
+        ### BATCH DELETE EVENTS:
+        - For deleting multiple/all events (clear calendar, delete everything, etc.)
+        {{
+            "action_type": "batch_delete",
+            "batch_scope": "all|date_range|pattern_match",
+            "query_details": {{
+                "date" : "YYYY-MM-DD (if date mentioned or can be inferred)",
+                "date_range": {{"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}},
+                "title" : "pattern to match in event titles",
+                "start": "YYYY-MM-DDTHH:MM:SS{tz_offset} (time range start)",
+                "end": "YYYY-MM-DDTHH:MM:SS{tz_offset} (time range end)",
+                "calendarId": "primary"
+            }},
+            "estimated_count": "Expected number of events to delete",
+            "confirmation_required": true,
+            "confirmation_message": "This will delete ALL events matching '[criteria]'. Estimated X events."
+          }}
         
-        IMPORTANT: When the user specifies a time like "9 AM", make sure to use exactly 09:00:00 in the output, not 08:00:00 or any other time. Do not adjust the time in any way.
+        ### EXAMPLES OF DELETE PATTERNS:
+        - "cancel my 5pm meeting" → search by time
+        - "delete meeting with John" → search by title containing "John"  
+        - "remove tomorrow's appointment" → search by date
+        - "cancel the team standup" → search by title containing "team standup"
+        - "clear my Monday schedule" → search by date (next Monday)
+        
+        Ensure the response is **valid JSON format**. Do not include markdown formatting.
+        
+        IMPORTANT: When the user specifies a time like "9 AM", use exactly 09:00:00 in the output.
         
         User input: {prompt}
         """

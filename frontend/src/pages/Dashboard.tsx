@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Header from '@/components/Header';
 import CommandBar from '@/components/CommandBar';
+import DeleteConfirmation from '@/components/DeleteConfirmation';
 import { Calendar, Clock, ArrowRight, CalendarDays, ListTodo, Settings, LogOut, Link } from 'lucide-react';
 import { sendPrompt, CalendarResponse } from '@/lib/api';
 import { toast } from 'sonner';
@@ -31,6 +32,19 @@ const Dashboard = () => {
   const navigate = useNavigate();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef(null);
+  
+  // Delete confirmation state
+  const [deleteConfirm, setDeleteConfirm] = useState<{
+    isOpen: boolean;
+    events: any[];
+    prompt: string;
+    confidence?: string;
+    confirmationMessage?: string;
+  }>({
+    isOpen: false,
+    events: [],
+    prompt: '',
+  });
 
   // Check authentication status
   const checkAuth = async (): Promise<boolean> => {
@@ -163,7 +177,7 @@ const Dashboard = () => {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const handlePromptSubmit = async (prompt: string) => {
+  const handlePromptSubmit = async (prompt: string, skipConfirm: boolean = false) => {
     if (!prompt.trim()) return;
     
     // Ensure user is authenticated before making calendar requests
@@ -180,11 +194,32 @@ const Dashboard = () => {
       const result = await sendPrompt(prompt);
       console.log('Dashboard: Received result:', result);
       
+      // Check if this might be a delete request and we should show confirmation
+      const isDeleteIntent = /\b(cancel|remove|delete|drop|clear)\b/i.test(prompt);
+      
+      if (isDeleteIntent && !skipConfirm && result.events && result.events.length > 0) {
+        // Show delete confirmation dialog
+        setDeleteConfirm({
+          isOpen: true,
+          events: result.events,
+          prompt,
+          confidence: result.confidence || 'medium',
+          confirmationMessage: result.confirmation_message || `Delete ${result.events.length} event(s)?`
+        });
+        setIsLoading(false);
+        return;
+      }
+      
       setResponse(result);
       
       if (result.error) {
-        // Handle specific error types
-        if (result.error.includes('authentication') || result.error.includes('token')) {
+        // Handle rate limiting specifically
+        if (result.error.includes('Rate limit exceeded')) {
+          toast.error('Too many requests. Please wait a moment before trying again.');
+          if (result.rate_limit) {
+            console.log('Rate limit info:', result.rate_limit);
+          }
+        } else if (result.error.includes('authentication') || result.error.includes('token')) {
           toast.error('Authentication expired. Please sign in again.');
           setIsAuthenticated(false);
           navigate('/login?error=token_expired');
@@ -195,7 +230,11 @@ const Dashboard = () => {
         }
         console.error("Dashboard: Error from server:", result.error);
       } else if (result.message) {
-        toast.success("Request processed successfully!");
+        if (result.message.includes('deleted')) {
+          toast.success("Event deleted successfully!");
+        } else {
+          toast.success("Request processed successfully!");
+        }
       } else if (result.events && result.events.length > 0) {
         toast.success(`Found ${result.events.length} event(s)`);
       }
@@ -204,7 +243,9 @@ const Dashboard = () => {
       
       // Handle network and authentication errors
       if (error instanceof Error) {
-        if (error.message.includes('401') || error.message.includes('authentication')) {
+        if (error.message.includes('429')) {
+          toast.error('Rate limit exceeded. Please wait before trying again.');
+        } else if (error.message.includes('401') || error.message.includes('authentication')) {
           toast.error('Authentication expired. Please sign in again.');
           setIsAuthenticated(false);
           navigate('/login?error=auth_expired');
@@ -219,6 +260,27 @@ const Dashboard = () => {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleDeleteConfirm = async () => {
+    try {
+      // Re-submit the original prompt with skip confirmation flag
+      await handlePromptSubmit(deleteConfirm.prompt, true);
+    } finally {
+      setDeleteConfirm({
+        isOpen: false,
+        events: [],
+        prompt: '',
+      });
+    }
+  };
+
+  const handleDeleteCancel = () => {
+    setDeleteConfirm({
+      isOpen: false,
+      events: [],
+      prompt: '',
+    });
   };
 
   if (authLoading) {
@@ -312,6 +374,17 @@ const Dashboard = () => {
           </div>
         </div>
       </header>
+
+      {/* Delete Confirmation Dialog */}
+      <DeleteConfirmation
+        isOpen={deleteConfirm.isOpen}
+        onClose={handleDeleteCancel}
+        onConfirm={handleDeleteConfirm}
+        events={deleteConfirm.events}
+        isLoading={isLoading}
+        confidence={deleteConfirm.confidence as 'high' | 'medium' | 'low'}
+        confirmationMessage={deleteConfirm.confirmationMessage}
+      />
       
       <main className="pt-32 section-padding pb-20">
         <div className="max-w-4xl mx-auto animate-fade-up">
@@ -355,19 +428,50 @@ const Dashboard = () => {
                 />
                 
                 {!response && !isLoading && (
-                  <div className="flex flex-wrap justify-center gap-4 mt-6 text-sm text-gray-500 dark:text-gray-300">
-                    <span className="glass px-3 py-1 cursor-pointer hover:bg-white/20 dark:hover:bg-black/40 transition"
-                      onClick={() => handlePromptSubmit("What events do I have today?")}>
-                      "What events do I have today?"
-                    </span>
-                    <span className="glass px-3 py-1 cursor-pointer hover:bg-white/20 dark:hover:bg-black/40 transition"
-                      onClick={() => handlePromptSubmit("Schedule a team meeting tomorrow at 10am")}>
-                      "Schedule a team meeting tomorrow at 10am"
-                    </span>
-                    <span className="glass px-3 py-1 cursor-pointer hover:bg-white/20 dark:hover:bg-black/40 transition"
-                      onClick={() => handlePromptSubmit("I have a meeting with sujan for next monday at 10am")}>
-                      "I have a meeting with sujan for next monday at 10am"
-                    </span>
+                  <div className="space-y-4 mt-6">
+                    <div className="text-center">
+                      <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Try these examples:</h3>
+                    </div>
+                    
+                    <div className="flex flex-wrap justify-center gap-2 text-sm text-gray-500 dark:text-gray-300">
+                      {/* Create examples */}
+                      <span className="glass px-3 py-1 cursor-pointer hover:bg-white/20 dark:hover:bg-black/40 transition border-l-2 border-green-500"
+                        onClick={() => handlePromptSubmit("Schedule a team meeting tomorrow at 10am")}>
+                        "Schedule a team meeting tomorrow at 10am"
+                      </span>
+                      
+                      {/* View examples */}
+                      <span className="glass px-3 py-1 cursor-pointer hover:bg-white/20 dark:hover:bg-black/40 transition border-l-2 border-blue-500"
+                        onClick={() => handlePromptSubmit("What events do I have today?")}>
+                        "What events do I have today?"
+                      </span>
+                      
+                      {/* Delete examples */}
+                      <span className="glass px-3 py-1 cursor-pointer hover:bg-white/20 dark:hover:bg-black/40 transition border-l-2 border-red-500"
+                        onClick={() => handlePromptSubmit("Cancel my meeting at 5pm today")}>
+                        "Cancel my meeting at 5pm today"
+                      </span>
+                      
+                      <span className="glass px-3 py-1 cursor-pointer hover:bg-white/20 dark:hover:bg-black/40 transition border-l-2 border-red-500"
+                        onClick={() => handlePromptSubmit("Delete tomorrow's lunch appointment")}>
+                        "Delete tomorrow's lunch appointment"
+                      </span>
+                    </div>
+                    
+                    <div className="flex justify-center text-xs text-gray-400 dark:text-gray-500 gap-4">
+                      <span className="flex items-center gap-1">
+                        <div className="w-2 h-2 bg-green-500 rounded"></div>
+                        Create
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <div className="w-2 h-2 bg-blue-500 rounded"></div>
+                        View
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <div className="w-2 h-2 bg-red-500 rounded"></div>
+                        Delete
+                      </span>
+                    </div>
                   </div>
                 )}
               </div>

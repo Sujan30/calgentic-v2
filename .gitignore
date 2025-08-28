@@ -7,3 +7,5 @@ __pycache__/
 *.log
 .cursor/
 venv/
+credentials.json
+token.json

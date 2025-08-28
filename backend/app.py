@@ -16,6 +16,9 @@ from supabase import create_client, Client
 from cryptography.fernet import Fernet
 import base64
 from redis import Redis
+from rate_limiter import init_rate_limiter, rate_limit, check_global_rate_limit
+from metrics import init_metrics, record_operation_metric, record_delete_metric
+from batch_queue import init_batch_processor, get_batch_queue
 #hello world
 
 # Load environment variables from .env file
@@ -64,14 +67,30 @@ else:
 # Initialize Flask-Session
 Session(app)
 
+# Initialize rate limiter, metrics, and batch processor
+redis_client = Redis.from_url(os.environ.get('REDIS_URL'))
+init_rate_limiter(redis_client)
+init_metrics(redis_client)
+init_batch_processor(redis_client)
+
+# Configure CORS origins based on environment
+if environment == 'production':
+    cors_origins = [
+        "https://calgentic.com",
+        "https://www.calgentic.com"
+    ]
+else:
+    # Development environment - only frontend origins
+    cors_origins = [
+        "http://localhost:8080",
+        "http://127.0.0.1:8080"
+    ]
+
 # Enable CORS for allowed origins
 CORS(app,
      supports_credentials=True,
      resources={r"/*": {
-         "origins": [
-             "https://calgentic.com",
-             "https://www.calgentic.com"
-         ],
+         "origins": cors_origins,
          "methods": ["GET", "POST", "OPTIONS"],
          "allow_headers": ["Content-Type", "Authorization", "Accept"],
          "expose_headers": ["Content-Type", "Authorization"],
@@ -255,24 +274,13 @@ def require_tokens():
     return tokens
 
 @app.route("/prompt", methods=["POST", "OPTIONS"])
+@rate_limit('prompt')
 def onboard():
     # Handle OPTIONS preflight
     if request.method == "OPTIONS":
         response = app.make_default_options_response()
         origin = request.headers.get("Origin", "")
-        allowed_origins = [
-            "http://localhost:8080",
-            "http://127.0.0.1:8080",
-            "http://localhost:8081",
-            "http://127.0.0.1:8081",
-            "http://localhost:5001",
-            "http://127.0.0.1:5001",
-            "https://calgentic.com",
-            "https://www.calgentic.com",
-            "https://calgentic.onrender.com",
-            "https://api.calgentic.com",
-            "https://www.api.calgentic.com"
-        ]
+        allowed_origins = cors_origins
         response.headers["Access-Control-Allow-Origin"] = (
             origin if origin in allowed_origins else allowed_origins[0]
         )
@@ -287,8 +295,9 @@ def onboard():
     prompt_log_id = None
     
     # CORS response headers
+    default_origin = cors_origins[0] if cors_origins else "http://localhost:8080"
     response_headers = {
-        "Access-Control-Allow-Origin": request.headers.get("Origin", "https://calgentic.com"),
+        "Access-Control-Allow-Origin": request.headers.get("Origin", default_origin),
         "Access-Control-Allow-Credentials": "true",
         "Access-Control-Allow-Methods": "POST, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept",
@@ -570,6 +579,46 @@ def onboard():
                 return jsonify({"error": error_msg}), 400, response_headers
 
         elif action_type == "delete":
+            logger.info("DELETE: Starting delete operation processing")
+            # Additional rate limiting for delete operations
+            user_session = session.get("user", {})
+            user_id = user_session.get('db_user_id') or user_session.get('id')
+            logger.info(f"DELETE: user_session={user_session}, user_id={user_id}")
+            
+            if user_id:
+                from rate_limiter import rate_limiter
+                logger.info(f"DELETE: Checking rate limit for user {user_id}")
+                if rate_limiter:
+                    is_allowed, rate_info = rate_limiter.is_allowed(user_id, 'delete')
+                    logger.info(f"DELETE: Rate limit check result: allowed={is_allowed}, rate_info={rate_info}")
+                    if not is_allowed:
+                        error_msg = "Delete rate limit exceeded. Please wait before deleting more events."
+                        
+                        if prompt_log_id:
+                            try:
+                                update_prompt_log(
+                                    prompt_id=prompt_log_id,
+                                    ai_response=response_dict,
+                                    status='error',
+                                    error_message=error_msg,
+                                    processing_time_ms=int((time.time() - start_time) * 1000),
+                                    action_type=action_type
+                                )
+                            except Exception as log_error:
+                                pass
+                        
+                        response = jsonify({
+                            "error": error_msg,
+                            "rate_limit": rate_info
+                        })
+                        
+                        # Add rate limit headers
+                        if rate_limiter:
+                            for header, value in rate_limiter.get_rate_limit_headers(rate_info).items():
+                                response.headers[header] = value
+                        
+                        return response, 429, response_headers
+            
             if "query_details" not in response_dict:
                 error_msg = "Missing event query parameters for deletion"
                 
@@ -591,38 +640,111 @@ def onboard():
             query_details = response_dict["query_details"]
             
             try:
-                # First find the event to get its ID
+                # First find the event(s) to get their ID(s)
                 find_result, refreshed_tokens = main.findEvent(token_info=tokens, query_details=query_details, user_tz=user_tz)
                 session['tokens'] = refreshed_tokens
                 
                 if find_result.get("success") and find_result.get("events") and len(find_result["events"]) > 0:
-                    # Delete the first matching event
-                    event_to_delete = find_result["events"][0]
-                    delete_result, refreshed_tokens = main.deleteEvent(
-                        token_info=tokens,
-                        eventId=event_to_delete.get("id"),
-                        calendarId=query_details.get("calendarId", "primary")
-                    )
-                    session['tokens'] = refreshed_tokens
+                    events_to_delete = find_result["events"]
                     
-                    processing_time_ms = int((time.time() - start_time) * 1000)
+                    # Check if multiple events found - use batch processing
+                    if len(events_to_delete) > 1:
+                        logger.info(f"DELETE: Found {len(events_to_delete)} events, using batch processing")
+                        
+                        # Prepare operations for batch processing
+                        operations = []
+                        for event in events_to_delete:
+                            operations.append({
+                                'id': event.get('id'),
+                                'calendarId': query_details.get('calendarId', 'primary'),
+                                'summary': event.get('summary', 'Unknown Event')
+                            })
+                        
+                        # Get batch queue and create batch job
+                        batch_queue = get_batch_queue()
+                        if batch_queue:
+                            try:
+                                job_id = batch_queue.create_batch_job(
+                                    user_id=user_id,
+                                    job_type='batch_delete',
+                                    operations=operations,
+                                    user_tz=user_tz,
+                                    tokens=tokens
+                                )
+                                
+                                processing_time_ms = int((time.time() - start_time) * 1000)
+                                
+                                # Update prompt log with batch job info
+                                if prompt_log_id:
+                                    try:
+                                        update_prompt_log(
+                                            prompt_id=prompt_log_id,
+                                            ai_response=response_dict,
+                                            status='success',
+                                            processing_time_ms=processing_time_ms,
+                                            action_type=action_type,
+                                            event_data={**query_details, 'batch_job_id': job_id, 'events_count': len(events_to_delete)}
+                                        )
+                                    except Exception as log_error:
+                                        pass
+                                
+                                return jsonify({
+                                    "success": True,
+                                    "message": f"Batch deletion started for {len(events_to_delete)} events",
+                                    "batch_job_id": job_id,
+                                    "events_count": len(events_to_delete),
+                                    "is_batch": True
+                                }), 200, response_headers
+                                
+                            except Exception as batch_error:
+                                logger.error(f"Failed to create batch job: {batch_error}")
+                                # Fall back to single event deletion
+                                events_to_delete = [events_to_delete[0]]
+                        else:
+                            logger.warning("Batch queue not available, falling back to single event deletion")
+                            # Fall back to single event deletion
+                            events_to_delete = [events_to_delete[0]]
                     
-                    # Update prompt log
-                    if prompt_log_id:
+                    # Single event deletion (either originally single or fallback)
+                    if len(events_to_delete) == 1:
+                        event_to_delete = events_to_delete[0]
+                        delete_result, refreshed_tokens = main.deleteEvent(
+                            token_info=tokens,
+                            eventId=event_to_delete.get("id"),
+                            calendarId=query_details.get("calendarId", "primary")
+                        )
+                        session['tokens'] = refreshed_tokens
+                        
+                        processing_time_ms = int((time.time() - start_time) * 1000)
+                        
+                        # Record metrics for delete operation
                         try:
-                            update_prompt_log(
-                                prompt_id=prompt_log_id,
-                                ai_response=response_dict,
-                                status='success' if delete_result.get("success") else 'error',
-                                error_message=delete_result.get("error") if not delete_result.get("success") else None,
+                            record_delete_metric(
+                                user_id=user_id if user_id else "unknown",
+                                success=delete_result.get("success", False),
                                 processing_time_ms=processing_time_ms,
-                                action_type=action_type,
-                                event_data=query_details
+                                event_id=event_to_delete.get("id"),
+                                calendar_id=query_details.get("calendarId", "primary")
                             )
-                        except Exception as log_error:
-                            pass
-                    
-                    return jsonify(delete_result), 200 if delete_result.get("success") else 400, response_headers
+                        except Exception as metric_error:
+                            logger.error(f"Failed to record delete metrics: {metric_error}")
+                        
+                        # Update prompt log
+                        if prompt_log_id:
+                            try:
+                                update_prompt_log(
+                                    prompt_id=prompt_log_id,
+                                    ai_response=response_dict,
+                                    status='success' if delete_result.get("success") else 'error',
+                                    error_message=delete_result.get("error") if not delete_result.get("success") else None,
+                                    processing_time_ms=processing_time_ms,
+                                    action_type=action_type,
+                                    event_data=query_details
+                                )
+                            except Exception as log_error:
+                                pass
+                        
+                        return jsonify(delete_result), 200 if delete_result.get("success") else 400, response_headers
                 else:
                     error_msg = "No matching event found to delete"
                     
@@ -647,6 +769,363 @@ def onboard():
             except Exception as e:
                 processing_time_ms = int((time.time() - start_time) * 1000)
                 error_msg = f"Error deleting event: {str(e)}"
+                
+                if prompt_log_id:
+                    try:
+                        update_prompt_log(
+                            prompt_id=prompt_log_id,
+                            ai_response=response_dict,
+                            status='error',
+                            error_message=error_msg,
+                            processing_time_ms=processing_time_ms,
+                            action_type=action_type
+                        )
+                    except Exception as log_error:
+                        pass
+                
+                return jsonify({"error": error_msg}), 400, response_headers
+
+        elif action_type == "batch_delete":
+            logger.info("BATCH_DELETE: Starting batch delete operation processing")
+            
+            # Additional rate limiting for batch delete operations
+            user_session = session.get("user", {})
+            user_id = user_session.get('db_user_id') or user_session.get('id')
+            logger.info(f"BATCH_DELETE: user_session={user_session}, user_id={user_id}")
+            
+            if user_id:
+                from rate_limiter import rate_limiter
+                logger.info(f"BATCH_DELETE: Checking rate limit for user {user_id}")
+                if rate_limiter:
+                    is_allowed, rate_info = rate_limiter.is_allowed(user_id, 'delete')
+                    logger.info(f"BATCH_DELETE: Rate limit check result: allowed={is_allowed}, rate_info={rate_info}")
+                    if not is_allowed:
+                        error_msg = "Delete rate limit exceeded. Please wait before deleting more events."
+                        
+                        if prompt_log_id:
+                            try:
+                                update_prompt_log(
+                                    prompt_id=prompt_log_id,
+                                    ai_response=response_dict,
+                                    status='error',
+                                    error_message=error_msg,
+                                    processing_time_ms=int((time.time() - start_time) * 1000),
+                                    action_type=action_type
+                                )
+                            except Exception as log_error:
+                                pass
+                        
+                        response = jsonify({
+                            "error": error_msg,
+                            "rate_limit": rate_info
+                        })
+                        
+                        # Add rate limit headers
+                        if rate_limiter:
+                            for header, value in rate_limiter.get_rate_limit_headers(rate_info).items():
+                                response.headers[header] = value
+                        
+                        return response, 429, response_headers
+            
+            if "query_details" not in response_dict:
+                error_msg = "Missing event query parameters for batch deletion"
+                
+                if prompt_log_id:
+                    try:
+                        update_prompt_log(
+                            prompt_id=prompt_log_id,
+                            ai_response=response_dict,
+                            status='error',
+                            error_message=error_msg,
+                            processing_time_ms=int((time.time() - start_time) * 1000),
+                            action_type=action_type
+                        )
+                    except Exception as log_error:
+                        pass
+                
+                return jsonify({"error": error_msg}), 400, response_headers
+
+            query_details = response_dict["query_details"]
+            
+            try:
+                # Transform query_details if it has date_range structure
+                find_query = query_details.copy()
+                if "date_range" in find_query:
+                    date_range = find_query.pop("date_range")
+                    # If start and end dates are the same, use date field
+                    if date_range.get("start") == date_range.get("end"):
+                        find_query["date"] = date_range.get("start")
+                    else:
+                        # Use start and end fields for date range
+                        find_query["start"] = date_range.get("start") + "T00:00:00"
+                        find_query["end"] = date_range.get("end") + "T23:59:59"
+                
+                # Find the events to delete based on the query details
+                find_result, refreshed_tokens = main.findEvent(token_info=tokens, query_details=find_query, user_tz=user_tz)
+                session['tokens'] = refreshed_tokens
+                
+                if find_result.get("success") and find_result.get("events") and len(find_result["events"]) > 0:
+                    events_to_delete = find_result["events"]
+                    logger.info(f"BATCH_DELETE: Found {len(events_to_delete)} events for batch deletion")
+                    
+                    # Prepare operations for batch processing
+                    operations = []
+                    for event in events_to_delete:
+                        operations.append({
+                            'id': event.get('id'),
+                            'calendarId': query_details.get('calendarId', 'primary'),
+                            'summary': event.get('summary', 'Unknown Event')
+                        })
+                    
+                    # Get batch queue and create batch job
+                    batch_queue = get_batch_queue()
+                    if batch_queue:
+                        try:
+                            job_id = batch_queue.create_batch_job(
+                                user_id=user_id,
+                                job_type='batch_delete',
+                                operations=operations,
+                                user_tz=user_tz,
+                                tokens=tokens
+                            )
+                            
+                            processing_time_ms = int((time.time() - start_time) * 1000)
+                            
+                            # Update prompt log with batch job info
+                            if prompt_log_id:
+                                try:
+                                    update_prompt_log(
+                                        prompt_id=prompt_log_id,
+                                        ai_response=response_dict,
+                                        status='success',
+                                        processing_time_ms=processing_time_ms,
+                                        action_type=action_type,
+                                        event_data={**query_details, 'batch_job_id': job_id, 'events_count': len(events_to_delete)}
+                                    )
+                                except Exception as log_error:
+                                    pass
+                            
+                            # Check if confirmation was required by AI
+                            confirmation_message = response_dict.get("confirmation_message", 
+                                f"Batch deletion started for {len(events_to_delete)} events")
+                            
+                            return jsonify({
+                                "success": True,
+                                "message": confirmation_message,
+                                "batch_job_id": job_id,
+                                "events_count": len(events_to_delete),
+                                "is_batch": True,
+                                "confirmation_required": response_dict.get("confirmation_required", False)
+                            }), 200, response_headers
+                            
+                        except Exception as batch_error:
+                            logger.error(f"Failed to create batch delete job: {batch_error}")
+                            error_msg = f"Failed to create batch delete job: {str(batch_error)}"
+                            
+                            if prompt_log_id:
+                                try:
+                                    update_prompt_log(
+                                        prompt_id=prompt_log_id,
+                                        ai_response=response_dict,
+                                        status='error',
+                                        error_message=error_msg,
+                                        processing_time_ms=int((time.time() - start_time) * 1000),
+                                        action_type=action_type
+                                    )
+                                except Exception as log_error:
+                                    pass
+                            
+                            return jsonify({"error": error_msg}), 500, response_headers
+                    else:
+                        error_msg = "Batch processing system not available"
+                        
+                        if prompt_log_id:
+                            try:
+                                update_prompt_log(
+                                    prompt_id=prompt_log_id,
+                                    ai_response=response_dict,
+                                    status='error',
+                                    error_message=error_msg,
+                                    processing_time_ms=int((time.time() - start_time) * 1000),
+                                    action_type=action_type
+                                )
+                            except Exception as log_error:
+                                pass
+                        
+                        return jsonify({"error": error_msg}), 503, response_headers
+                else:
+                    error_msg = "No matching events found for batch deletion"
+                    
+                    if prompt_log_id:
+                        try:
+                            update_prompt_log(
+                                prompt_id=prompt_log_id,
+                                ai_response=response_dict,
+                                status='error',
+                                error_message=error_msg,
+                                processing_time_ms=int((time.time() - start_time) * 1000),
+                                action_type=action_type
+                            )
+                        except Exception as log_error:
+                            pass
+                    
+                    return jsonify({
+                        "success": False,
+                        "message": error_msg
+                    }), 404, response_headers
+                    
+            except Exception as e:
+                processing_time_ms = int((time.time() - start_time) * 1000)
+                error_msg = f"Error processing batch delete: {str(e)}"
+                logger.error(f"BATCH_DELETE: {error_msg}")
+                
+                if prompt_log_id:
+                    try:
+                        update_prompt_log(
+                            prompt_id=prompt_log_id,
+                            ai_response=response_dict,
+                            status='error',
+                            error_message=error_msg,
+                            processing_time_ms=processing_time_ms,
+                            action_type=action_type
+                        )
+                    except Exception as log_error:
+                        pass
+                
+                return jsonify({"error": error_msg}), 400, response_headers
+
+        elif action_type == "batch_create":
+            logger.info("BATCH_CREATE: Starting batch create operation processing")
+            
+            user_session = session.get("user", {})
+            user_id = user_session.get('db_user_id') or user_session.get('id')
+            logger.info(f"BATCH_CREATE: user_session={user_session}, user_id={user_id}")
+            
+            if "eventParams" not in response_dict:
+                error_msg = "Missing event parameters for batch creation"
+                
+                if prompt_log_id:
+                    try:
+                        update_prompt_log(
+                            prompt_id=prompt_log_id,
+                            ai_response=response_dict,
+                            status='error',
+                            error_message=error_msg,
+                            processing_time_ms=int((time.time() - start_time) * 1000),
+                            action_type=action_type
+                        )
+                    except Exception as log_error:
+                        pass
+                
+                return jsonify({"error": error_msg}), 400, response_headers
+
+            eventParams = response_dict["eventParams"]
+            if not isinstance(eventParams, list) or len(eventParams) == 0:
+                error_msg = "Invalid event parameters format for batch creation"
+                
+                if prompt_log_id:
+                    try:
+                        update_prompt_log(
+                            prompt_id=prompt_log_id,
+                            ai_response=response_dict,
+                            status='error',
+                            error_message=error_msg,
+                            processing_time_ms=int((time.time() - start_time) * 1000),
+                            action_type=action_type
+                        )
+                    except Exception as log_error:
+                        pass
+                
+                return jsonify({"error": error_msg}), 400, response_headers
+
+            try:
+                # Prepare operations for batch processing
+                operations = []
+                for event_data in eventParams:
+                    event_copy = event_data.copy()
+                    event_copy["timeZone"] = user_tz
+                    operations.append(event_copy)
+                
+                # Get batch queue and create batch job
+                batch_queue = get_batch_queue()
+                if batch_queue:
+                    try:
+                        job_id = batch_queue.create_batch_job(
+                            user_id=user_id,
+                            job_type='batch_create',
+                            operations=operations,
+                            user_tz=user_tz,
+                            tokens=tokens
+                        )
+                        
+                        processing_time_ms = int((time.time() - start_time) * 1000)
+                        
+                        # Update prompt log with batch job info
+                        if prompt_log_id:
+                            try:
+                                update_prompt_log(
+                                    prompt_id=prompt_log_id,
+                                    ai_response=response_dict,
+                                    status='success',
+                                    processing_time_ms=processing_time_ms,
+                                    action_type=action_type,
+                                    event_data={'batch_job_id': job_id, 'events_count': len(operations)}
+                                )
+                            except Exception as log_error:
+                                pass
+                        
+                        # Get completion message from AI response or use default
+                        completion_message = response_dict.get("eventCompletion", 
+                            f"Batch creation started for {len(operations)} events")
+                        
+                        return jsonify({
+                            "success": True,
+                            "message": completion_message,
+                            "batch_job_id": job_id,
+                            "events_count": len(operations),
+                            "is_batch": True
+                        }), 200, response_headers
+                        
+                    except Exception as batch_error:
+                        logger.error(f"Failed to create batch create job: {batch_error}")
+                        error_msg = f"Failed to create batch create job: {str(batch_error)}"
+                        
+                        if prompt_log_id:
+                            try:
+                                update_prompt_log(
+                                    prompt_id=prompt_log_id,
+                                    ai_response=response_dict,
+                                    status='error',
+                                    error_message=error_msg,
+                                    processing_time_ms=int((time.time() - start_time) * 1000),
+                                    action_type=action_type
+                                )
+                            except Exception as log_error:
+                                pass
+                        
+                        return jsonify({"error": error_msg}), 500, response_headers
+                else:
+                    error_msg = "Batch processing system not available"
+                    
+                    if prompt_log_id:
+                        try:
+                            update_prompt_log(
+                                prompt_id=prompt_log_id,
+                                ai_response=response_dict,
+                                status='error',
+                                error_message=error_msg,
+                                processing_time_ms=int((time.time() - start_time) * 1000),
+                                action_type=action_type
+                            )
+                        except Exception as log_error:
+                            pass
+                    
+                    return jsonify({"error": error_msg}), 503, response_headers
+                    
+            except Exception as e:
+                processing_time_ms = int((time.time() - start_time) * 1000)
+                error_msg = f"Error processing batch create: {str(e)}"
+                logger.error(f"BATCH_CREATE: {error_msg}")
                 
                 if prompt_log_id:
                     try:
@@ -966,24 +1445,11 @@ def ping():
 @app.after_request
 def after_request(response):
     origin = request.headers.get('Origin', '')
-    allowed_origins = [
-        "http://localhost:8080",
-        "http://127.0.0.1:8080",
-        "http://localhost:8081",
-        "http://127.0.0.1:8081",
-        "http://localhost:5001",
-        "http://127.0.0.1:5001",
-        "https://calgentic.com",
-        "https://www.calgentic.com",
-        "https://calgentic.onrender.com",
-        "https://api.calgentic.com",
-        "https://www.api.calgentic.com"
-    ]
     
-    if origin in allowed_origins:
+    if origin in cors_origins:
         response.headers['Access-Control-Allow-Origin'] = origin
     else:
-        response.headers['Access-Control-Allow-Origin'] = allowed_origins[0]
+        response.headers['Access-Control-Allow-Origin'] = cors_origins[0] if cors_origins else "http://localhost:8080"
 
     response.headers['Access-Control-Allow-Credentials'] = 'true'
     response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
@@ -1339,7 +1805,265 @@ def get_all_prompts():
     except Exception as e:
         return jsonify({"error": "Failed to retrieve prompts"}), 500
 
+@app.route('/api/admin/metrics', methods=['GET'])
+def get_metrics():
+    """Get application metrics (admin endpoint)"""
+    # Note: Add proper admin authentication here
+    from metrics import metrics_collector
+    
+    if not metrics_collector:
+        return jsonify({"error": "Metrics not configured"}), 500
+    
+    try:
+        days = int(request.args.get('days', 7))
+        summary = metrics_collector.get_metrics_summary(days)
+        delete_metrics = metrics_collector.get_delete_metrics()
+        
+        return jsonify({
+            'success': True,
+            'metrics': {
+                'summary': summary,
+                'delete_operations': delete_metrics,
+                'generated_at': datetime.now(timezone.utc).isoformat()
+            }
+        })
+    except Exception as e:
+        logger.error(f"Failed to get metrics: {e}")
+        return jsonify({"error": "Failed to retrieve metrics"}), 500
 
+@app.route('/api/admin/metrics/delete', methods=['GET'])
+def get_delete_metrics():
+    """Get detailed delete operation metrics (admin endpoint)"""
+    from metrics import metrics_collector
+    
+    if not metrics_collector:
+        return jsonify({"error": "Metrics not configured"}), 500
+    
+    try:
+        delete_metrics = metrics_collector.get_delete_metrics()
+        
+        return jsonify({
+            'success': True,
+            'delete_metrics': delete_metrics,
+            'generated_at': datetime.now(timezone.utc).isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Failed to get delete metrics: {e}")
+        return jsonify({"error": "Failed to retrieve delete metrics"}), 500
+
+@app.route('/api/batch/create', methods=['POST'])
+@rate_limit('batch')
+def create_batch_job():
+    """Create a batch processing job"""
+    tokens = require_tokens()
+    
+    # CORS response headers
+    default_origin = cors_origins[0] if cors_origins else "http://localhost:8080"
+    response_headers = {
+        "Access-Control-Allow-Origin": request.headers.get("Origin", default_origin),
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept",
+        "Access-Control-Expose-Headers": "Content-Type, Authorization",
+    }
+    
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Request body required"}), 400, response_headers
+        
+        # Get user information from session
+        user_session = session.get("user")
+        user_id = user_session.get('db_user_id') if user_session else None
+        
+        if not user_id:
+            return jsonify({"error": "User authentication required"}), 401, response_headers
+        
+        # Validate required fields
+        required_fields = ['job_type', 'operations', 'user_tz']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({"error": f"Missing required field: {field}"}), 400, response_headers
+        
+        job_type = data['job_type']
+        operations = data['operations']
+        user_tz = data['user_tz']
+        
+        # Validate job_type
+        if job_type not in ['batch_delete', 'batch_create']:
+            return jsonify({"error": "Invalid job_type. Must be 'batch_delete' or 'batch_create'"}), 400, response_headers
+        
+        # Validate operations is a list
+        if not isinstance(operations, list) or len(operations) == 0:
+            return jsonify({"error": "Operations must be a non-empty list"}), 400, response_headers
+        
+        # Get batch queue
+        batch_queue = get_batch_queue()
+        if not batch_queue:
+            return jsonify({"error": "Batch processing not available"}), 503, response_headers
+        
+        # Create batch job
+        job_id = batch_queue.create_batch_job(
+            user_id=user_id,
+            job_type=job_type,
+            operations=operations,
+            user_tz=user_tz,
+            tokens=tokens
+        )
+        
+        return jsonify({
+            "success": True,
+            "job_id": job_id,
+            "message": f"Batch job created with {len(operations)} operations"
+        }), 200, response_headers
+        
+    except Exception as e:
+        logger.error(f"Error creating batch job: {e}")
+        return jsonify({"error": "Failed to create batch job"}), 500, response_headers
+
+@app.route('/api/batch/status/<job_id>', methods=['GET'])
+def get_batch_job_status(job_id):
+    """Get status of a batch processing job"""
+    
+    # CORS response headers
+    default_origin = cors_origins[0] if cors_origins else "http://localhost:8080"
+    response_headers = {
+        "Access-Control-Allow-Origin": request.headers.get("Origin", default_origin),
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept",
+        "Access-Control-Expose-Headers": "Content-Type, Authorization",
+    }
+    
+    try:
+        # Get user information from session
+        user_session = session.get("user")
+        user_id = user_session.get('db_user_id') if user_session else None
+        
+        if not user_id:
+            return jsonify({"error": "User authentication required"}), 401, response_headers
+        
+        # Get batch queue
+        batch_queue = get_batch_queue()
+        if not batch_queue:
+            return jsonify({"error": "Batch processing not available"}), 503, response_headers
+        
+        # Get job status
+        job_data = batch_queue.get_job_status(job_id)
+        
+        if not job_data:
+            return jsonify({"error": "Job not found"}), 404, response_headers
+        
+        # Verify job belongs to user
+        if job_data.get('user_id') != user_id:
+            return jsonify({"error": "Job not found"}), 404, response_headers
+        
+        # Remove sensitive data
+        safe_job_data = {
+            'id': job_data['id'],
+            'job_type': job_data['job_type'],
+            'status': job_data['status'],
+            'progress': job_data['progress'],
+            'created_at': job_data['created_at'],
+            'updated_at': job_data['updated_at'],
+            'results': job_data.get('results', []),
+            'errors': job_data.get('errors', [])
+        }
+        
+        return jsonify({
+            "success": True,
+            "job": safe_job_data
+        }), 200, response_headers
+        
+    except Exception as e:
+        logger.error(f"Error getting batch job status: {e}")
+        return jsonify({"error": "Failed to get job status"}), 500, response_headers
+
+@app.route('/api/batch/jobs', methods=['GET'])
+def get_user_batch_jobs():
+    """Get all batch jobs for the current user"""
+    
+    # CORS response headers
+    default_origin = cors_origins[0] if cors_origins else "http://localhost:8080"
+    response_headers = {
+        "Access-Control-Allow-Origin": request.headers.get("Origin", default_origin),
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept",
+        "Access-Control-Expose-Headers": "Content-Type, Authorization",
+    }
+    
+    try:
+        # Get user information from session
+        user_session = session.get("user")
+        user_id = user_session.get('db_user_id') if user_session else None
+        
+        if not user_id:
+            return jsonify({"error": "User authentication required"}), 401, response_headers
+        
+        # Get batch queue
+        batch_queue = get_batch_queue()
+        if not batch_queue:
+            return jsonify({"error": "Batch processing not available"}), 503, response_headers
+        
+        # Get user jobs
+        jobs = batch_queue.get_user_jobs(user_id)
+        
+        return jsonify({
+            "success": True,
+            "jobs": jobs
+        }), 200, response_headers
+        
+    except Exception as e:
+        logger.error(f"Error getting user batch jobs: {e}")
+        return jsonify({"error": "Failed to get user jobs"}), 500, response_headers
+
+@app.route('/api/batch/cancel/<job_id>', methods=['POST'])
+def cancel_batch_job(job_id):
+    """Cancel a batch processing job"""
+    
+    # CORS response headers
+    default_origin = cors_origins[0] if cors_origins else "http://localhost:8080"
+    response_headers = {
+        "Access-Control-Allow-Origin": request.headers.get("Origin", default_origin),
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept",
+        "Access-Control-Expose-Headers": "Content-Type, Authorization",
+    }
+    
+    try:
+        # Get user information from session
+        user_session = session.get("user")
+        user_id = user_session.get('db_user_id') if user_session else None
+        
+        if not user_id:
+            return jsonify({"error": "User authentication required"}), 401, response_headers
+        
+        # Get batch queue
+        batch_queue = get_batch_queue()
+        if not batch_queue:
+            return jsonify({"error": "Batch processing not available"}), 503, response_headers
+        
+        # Cancel job
+        success = batch_queue.cancel_job(job_id, user_id)
+        
+        if success:
+            return jsonify({
+                "success": True,
+                "message": "Job cancelled successfully"
+            }), 200, response_headers
+        else:
+            return jsonify({"error": "Job not found or already completed"}), 404, response_headers
+        
+    except Exception as e:
+        logger.error(f"Error cancelling batch job: {e}")
+        return jsonify({"error": "Failed to cancel job"}), 500, response_headers
+
+
+@app.route('/billing/pay')
+def payment():
+    return "pay me money"
 
 class PromptEncryptor:
     def __init__(self):
