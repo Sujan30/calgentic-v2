@@ -21,6 +21,7 @@ python-dotenv==1.0.1
 
 # Date/Time Handling
 pytz==2024.1
+python-dateutil==2.8.2
 
 # JWT
 PyJWT==2.8.0

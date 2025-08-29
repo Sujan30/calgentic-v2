@@ -7,6 +7,7 @@ import socket
 from openai import OpenAI
 from dotenv import load_dotenv
 import json
+import dateutil.parser
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -500,13 +501,32 @@ def formatEvent(token_info: Dict[str, Any], event: Dict[str, Any]) -> Tuple[Dict
     Create a Google Calendar event using token_info and event data.
     Returns (response_dict, updated_token_info).
     """
-    # Validate required fields
-    for key in ('summary', 'description', 'start', 'end'):
-        if key not in event:
+    # Validate required fields and auto-generate end time if missing
+    for key in ('summary', 'start'):
+        if key not in event or not event[key]:
             return ({
                 "success": False,
-                "message": f"Missing required key: {key}",
-                "error": f"Event data is missing '{key}'"
+                "message": f"Missing or empty required key: {key}",
+                "error": f"Event data is missing or empty for '{key}'"
+            }, token_info)
+    
+    # Set default description if missing or empty
+    if 'description' not in event or not event['description']:
+        event['description'] = event.get('summary', 'No description')
+    
+    # Auto-generate end time if missing or empty (default to 1 hour after start)
+    if 'end' not in event or not event['end']:
+        from datetime import timedelta
+        try:
+            start_time = dateutil.parser.isoparse(event['start'])
+            end_time = start_time + timedelta(hours=1)
+            event['end'] = end_time.isoformat()
+            print(f"Auto-generated end time: {event['end']} for event: {event.get('summary', 'Unnamed')}")
+        except Exception as e:
+            return ({
+                "success": False,
+                "message": f"Invalid start time format and cannot auto-generate end time: {e}",
+                "error": f"Start time '{event['start']}' is not in valid ISO format"
             }, token_info)
 
     # Build calendar service

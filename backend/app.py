@@ -428,39 +428,144 @@ def onboard():
 
             eventParams = response_dict["eventParams"]
             if isinstance(eventParams, list) and len(eventParams) > 0:
-                event_data = eventParams[0]
-                event_data["timeZone"] = user_tz
-
-                try:
-                    print("Event data to formatEvent:", event_data)
-                    # Pass session to formatEvent
-                    result, refreshed_tokens = main.formatEvent(token_info=tokens, event=event_data)
-                    session['tokens'] = refreshed_tokens
-                    print("Result from formatEvent:", result)
-                    processing_time_ms = int((time.time() - start_time) * 1000)
+                
+                # Check if multiple events need to be created - use batch processing
+                if len(eventParams) > 1:
+                    logger.info(f"CREATE: Found {len(eventParams)} events, using batch processing")
                     
-                    if result and result.get("success", False):
-                        event_created = True
-                        message = response_dict["eventCompletion"]
-                        
-                        # Update prompt log with success
+                    # Get user information for batch processing
+                    user_session = session.get("user", {})
+                    user_id = user_session.get('db_user_id') or user_session.get('id')
+                    
+                    if not user_id:
+                        error_msg = "User authentication required for batch creation"
                         if prompt_log_id:
                             try:
                                 update_prompt_log(
                                     prompt_id=prompt_log_id,
                                     ai_response=response_dict,
-                                    status='success',
-                                    processing_time_ms=processing_time_ms,
-                                    event_created=True,
-                                    event_data=event_data,
+                                    status='error',
+                                    error_message=error_msg,
+                                    processing_time_ms=int((time.time() - start_time) * 1000),
                                     action_type=action_type
                                 )
                             except Exception as log_error:
                                 pass
-                        
-                        return jsonify({"message": message, "success": True}), 200, response_headers
+                        return jsonify({"error": error_msg}), 401, response_headers
+                    
+                    # Prepare operations for batch processing
+                    operations = []
+                    for event_data in eventParams:
+                        event_copy = event_data.copy()
+                        event_copy["timeZone"] = user_tz
+                        operations.append(event_copy)
+                    
+                    # Get batch queue and create batch job
+                    batch_queue = get_batch_queue()
+                    if batch_queue:
+                        try:
+                            job_id = batch_queue.create_batch_job(
+                                user_id=user_id,
+                                job_type='batch_create',
+                                operations=operations,
+                                user_tz=user_tz,
+                                tokens=tokens
+                            )
+                            
+                            processing_time_ms = int((time.time() - start_time) * 1000)
+                            
+                            # Update prompt log with batch job info
+                            if prompt_log_id:
+                                try:
+                                    update_prompt_log(
+                                        prompt_id=prompt_log_id,
+                                        ai_response=response_dict,
+                                        status='success',
+                                        processing_time_ms=processing_time_ms,
+                                        action_type="batch_create",
+                                        event_data={'batch_job_id': job_id, 'events_count': len(operations)},
+                                        event_created=True
+                                    )
+                                except Exception as log_error:
+                                    pass
+                            
+                            # Get completion message from AI response or use default
+                            completion_message = response_dict.get("eventCompletion", 
+                                f"Batch creation started for {len(operations)} events")
+                            
+                            return jsonify({
+                                "success": True,
+                                "message": completion_message,
+                                "batch_job_id": job_id,
+                                "events_count": len(operations),
+                                "is_batch": True
+                            }), 200, response_headers
+                            
+                        except Exception as batch_error:
+                            logger.error(f"Failed to create batch create job: {batch_error}")
+                            # Fall back to single event creation
+                            logger.warning("Batch queue failed, falling back to single event creation")
+                            eventParams = [eventParams[0]]
                     else:
-                        error_msg = f"Failed to create event: {result}"
+                        logger.warning("Batch queue not available, falling back to single event creation")
+                        # Fall back to single event creation
+                        eventParams = [eventParams[0]]
+                
+                # Single event creation (either originally single or fallback)
+                if len(eventParams) == 1:
+                    event_data = eventParams[0]
+                    event_data["timeZone"] = user_tz
+
+                    try:
+                        print("Event data to formatEvent:", event_data)
+                        # Pass session to formatEvent
+                        result, refreshed_tokens = main.formatEvent(token_info=tokens, event=event_data)
+                        session['tokens'] = refreshed_tokens
+                        print("Result from formatEvent:", result)
+                        processing_time_ms = int((time.time() - start_time) * 1000)
+                        
+                        if result and result.get("success", False):
+                            event_created = True
+                            message = response_dict["eventCompletion"]
+                            
+                            # Update prompt log with success
+                            if prompt_log_id:
+                                try:
+                                    update_prompt_log(
+                                        prompt_id=prompt_log_id,
+                                        ai_response=response_dict,
+                                        status='success',
+                                        processing_time_ms=processing_time_ms,
+                                        event_created=True,
+                                        event_data=event_data,
+                                        action_type=action_type
+                                    )
+                                except Exception as log_error:
+                                    pass
+                            
+                            return jsonify({"message": message, "success": True}), 200, response_headers
+                        else:
+                            error_msg = f"Failed to create event: {result}"
+                            
+                            if prompt_log_id:
+                                try:
+                                    update_prompt_log(
+                                        prompt_id=prompt_log_id,
+                                        ai_response=response_dict,
+                                        status='error',
+                                        error_message=error_msg,
+                                        processing_time_ms=processing_time_ms,
+                                        event_data=event_data,
+                                        action_type=action_type
+                                    )
+                                except Exception as log_error:
+                                    pass
+                            
+                            return jsonify({"error": "Failed to create event"}), 400, response_headers
+                            
+                    except Exception as e:
+                        processing_time_ms = int((time.time() - start_time) * 1000)
+                        error_msg = f"Error processing event: {str(e)}"
                         
                         if prompt_log_id:
                             try:
@@ -476,27 +581,7 @@ def onboard():
                             except Exception as log_error:
                                 pass
                         
-                        return jsonify({"error": "Failed to create event"}), 400, response_headers
-                        
-                except Exception as e:
-                    processing_time_ms = int((time.time() - start_time) * 1000)
-                    error_msg = f"Error processing event: {str(e)}"
-                    
-                    if prompt_log_id:
-                        try:
-                            update_prompt_log(
-                                prompt_id=prompt_log_id,
-                                ai_response=response_dict,
-                                status='error',
-                                error_message=error_msg,
-                                processing_time_ms=processing_time_ms,
-                                event_data=event_data,
-                                action_type=action_type
-                            )
-                        except Exception as log_error:
-                            pass
-                    
-                    return jsonify({"error": error_msg}), 400, response_headers
+                        return jsonify({"error": error_msg}), 400, response_headers
             else:
                 processing_time_ms = int((time.time() - start_time) * 1000)
                 error_msg = "Invalid event parameters format"
